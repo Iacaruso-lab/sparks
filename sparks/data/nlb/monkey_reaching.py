@@ -8,19 +8,25 @@ from nlb_tools.nwb_interface import NWBDataset
 from sparks.data.misc import smooth, normalize
 
 
-def process_dataset(dataset_path: os.path, mode='prediction'):
+def process_dataset(dataset_path: os.path, mode='prediction', y_keys: str = 'hand_pos'):
     dataset = NWBDataset(dataset_path, "*train", split_heldout=False)
 
     trial_mask = (~dataset.trial_info.ctr_hold_bump) & (dataset.trial_info.split != 'none')  # only active trials
     unique_angles = [0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0]
 
-    lag = 40
+    if mode == 'prediction':
+        lag = 40
+    else:
+        lag = 0
     align_range = (-100, 500)
     align_field = 'move_onset_time'
 
     lag_align_range = (align_range[0] + lag, align_range[1] + lag)
+    
+    if y_keys != 'direction':
+        dataset.data[y_keys] = (dataset.data[y_keys] - dataset.data[y_keys].min()) / (dataset.data[y_keys].max() - dataset.data[y_keys].min())
 
-    if mode == 'prediction':
+    if mode in ['prediction', 'spikes_pred']:
         align_data_train = [dataset.make_trial_data(align_field=align_field, align_range=align_range,
                                                     ignored_trials=~(trial_mask  
                                                                      & (dataset.trial_info['cond_dir'] == angle)
@@ -64,8 +70,10 @@ def make_monkey_reaching_dataset(dataset_path: os.path,
                                  batch_size: int = 32,
                                  smooth: bool = False):
 
-    align_data_train, align_data_test, lag_align_data_train, lag_align_data_test = process_dataset(dataset_path)
-    normalize_targets = False if y_keys == 'direction' else True
+    align_data_train, align_data_test, lag_align_data_train, lag_align_data_test = process_dataset(dataset_path,
+                                                                                                   mode=mode,
+                                                                                                   y_keys=y_keys)
+    normalize_targets = False if ((y_keys == 'direction') or (mode in ['unsupervised', 'spikes_pred'])) else True
 
     train_dataset = MonkeyReachingDataset(align_data_train, lag_align_data_train, y_keys, mode=mode, smooth=smooth, 
                                           normalize_targets=normalize_targets)
@@ -107,21 +115,19 @@ class MonkeyReachingDataset(torch.utils.data.Dataset):
             subkeys = None
 
         if y_keys == 'direction':
-            y_trial_data = [np.ones([len(lag_align_data[i]['spikes'].to_numpy().reshape([-1, 600, 65])), 1]) * i 
-                            for i in range(len(lag_align_data))]
+            y_trial_data = np.vstack([np.ones([len(align_data[i]['spikes'].to_numpy().reshape([-1, 600, 65])), 600]) * i
+                                      for i in range(len(lag_align_data))])
         else:
             if subkeys is not None:
-                y_trial_data = np.vstack([lag_align_data[i][y_keys][subkeys].to_numpy().reshape([-1, 600, 3])
+                y_dim = lag_align_data[0][y_keys][subkeys].to_numpy().shape[-1]
+                y_trial_data = np.vstack([lag_align_data[i][y_keys][subkeys].to_numpy().reshape([-1, 600, y_dim])
                                           for i in range(len(lag_align_data))]).transpose([0, 2, 1])
             else:
-                y_trial_data = np.vstack([lag_align_data[i][y_keys].to_numpy().reshape([-1, 600, 2])
+                y_dim = lag_align_data[0][y_keys].to_numpy().shape[-1]
+                y_trial_data = np.vstack([lag_align_data[i][y_keys].to_numpy().reshape([-1, 600, y_dim])
                                           for i in range(len(lag_align_data))]).transpose([0, 2, 1])
 
-        if normalize_targets:
-            self.y_trial_data = normalize(y_trial_data)
-        else:
-            self.y_trial_data = y_trial_data
-
+        self.y_trial_data = y_trial_data
         self.y_shape = self.y_trial_data.shape[-2]
         self.x_shape = self.x_trial_data.shape[-2]
 

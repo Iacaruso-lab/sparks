@@ -19,7 +19,7 @@ if __name__ == "__main__":
     parser.add_argument('--home', default=r"/home")
     parser.add_argument('--n_epochs', type=int, default=50, help='Number of training epochs')
     parser.add_argument('--test_period', type=int, default=5, help='Test period in number of epochs')
-    parser.add_argument('--beta', type=float, default=0.001, help='KLD regularisation')
+    parser.add_argument('--beta', type=float, default=0.000001, help='KLD regularisation')
     parser.add_argument('--lr', type=float, default=0.001, help='Learning rate')
     parser.add_argument('--batch_size', type=int, default=6, help='Batch size')
     parser.add_argument('--num_workers', type=int, default=0, help='For dataloading')
@@ -35,7 +35,7 @@ if __name__ == "__main__":
                         help='Type of decoder (one of linear or mlp)')
     parser.add_argument('--tau_p', type=int, default=6, help='Past window size')
     parser.add_argument('--tau_f', type=int, default=1, help='Future window size')
-    parser.add_argument('--tau_s', type=float, default=0.5, help='STDP decay')
+    parser.add_argument('--tau_s', type=float, default=1., help='STDP decay')
 
     # Data parameters
     parser.add_argument('--n_skip_sessions', type=int, default=0, help='First session to consider')

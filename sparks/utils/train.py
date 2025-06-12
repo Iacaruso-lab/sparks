@@ -35,6 +35,7 @@ def train_init(encoder: torch.nn.Module,
         loss (int): Initial loss, set to 0.
         T (int): The number of time-steps in the inputs after excluding the burn-in period.
     """
+
     encoder.train()
     decoder.train()
 
@@ -49,7 +50,8 @@ def train_init(encoder: torch.nn.Module,
 def update_and_reset(encoder: torch.nn.Module,
                      decoder: torch.nn.Module,
                      loss: Any,
-                     optimizer: torch.optim.Optimizer):
+                     optimizer: torch.optim.Optimizer,
+                     max_val: float = 0.5):
     """
     Updates the model's weights using the computed loss and the optimizer, and then resets the gradients.
     This function is typically called after every batch during training.
@@ -65,7 +67,11 @@ def update_and_reset(encoder: torch.nn.Module,
     """
 
     loss.backward()
+    torch.nn.utils.clip_grad_value_(encoder.parameters(), max_val) 
+    torch.nn.utils.clip_grad_value_(decoder.parameters(), max_val) 
+
     optimizer.step()
+
     encoder.zero_grad(set_to_none=True)
     decoder.zero_grad(set_to_none=True)
 
@@ -142,7 +148,6 @@ def train_on_batch(encoder: torch.nn.Module,
 
     if not online:
         update_and_reset(encoder, decoder, loss, optimizer)
-
 
 def train(encoder: torch.nn.Module,
           decoder: torch.nn.Module,

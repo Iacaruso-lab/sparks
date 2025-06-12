@@ -8,7 +8,7 @@ import tqdm
 from sparks.data.allen.gratings_pseudomouse import make_gratings_dataset
 from sparks.models.decoders import get_decoder
 from sparks.models.encoders import HebbianTransformerEncoder
-from sparks.utils.misc import make_res_folder, save_results
+from sparks.utils.misc import make_res_folder, save_results, LongCycler
 from sparks.utils.test import test_on_batch
 from sparks.utils.train import train_on_batch
 
@@ -37,24 +37,29 @@ if __name__ == "__main__":
     parser.add_argument('--tau_p', type=int, default=10, help='Past window size')
     parser.add_argument('--tau_f', type=int, default=1, help='Future window size')
     parser.add_argument('--tau_s', type=float, default=0.5, help='STDP decay')
+    parser.add_argument('--alpha', type=float, default=1., help='')
 
     # data
     parser.add_argument('--n_neurons', type=int, default=100)
-    parser.add_argument('--neuron_type', type=str, default='VISp')
-
     parser.add_argument('--target_type', type=str, default='freq', choices=['freq', 'class', 'unsupervised'],
-                        help='Type of target to predict: either spatial frequencies or class index')
+                    help='Type of target to predict: either spatial frequencies or class index')
     parser.add_argument('--p_train', type=float, default=0.8, help='Number of training example')
     parser.add_argument('--dt', type=float, default=0.001, help='time bins period')
     parser.add_argument('--seed', type=int, default=None, help='random seed for reproducibility')
 
     args = parser.parse_args()
+    neuron_types = ['VISp', 'VISal', 'VISrl', 'VISpm', 'VISam', 'VISl']
+    args.neuron_types = neuron_types
 
-    make_res_folder('allen_gratings_pseudomouse_' + args.target_type + '_' + args.neuron_type, os.getcwd(), args)
+    make_res_folder('allen_gratings_pseudomouse_stack_' + args.target_type, os.getcwd(), args)
 
-    neuron_types = [args.neuron_type]
+    train_datasets = []
+    test_datasets = []
+    train_dls = []
+    test_dls = []
+
     (train_dataset, train_dl,
-     test_dataset, test_dl) = make_gratings_dataset(os.path.join(args.home, "datasets/allen_visual/"),
+    test_dataset, test_dl) = make_gratings_dataset(os.path.join(args.home, "datasets/allen_visual/"),
                                                     n_neurons=args.n_neurons,
                                                     dt=args.dt,
                                                     neuron_types=neuron_types,
@@ -65,13 +70,14 @@ if __name__ == "__main__":
                                                     seed=args.seed)
     np.save(args.results_path + '/good_units_ids.npy', train_dataset.good_units_ids)
 
-    encoding_network = HebbianTransformerEncoder(n_neurons_per_sess=len(train_dataset.good_units_ids),
+    encoding_network = HebbianTransformerEncoder(n_neurons_per_sess=args.n_neurons * len(neuron_types),
                                                  embed_dim=args.embed_dim,
                                                  latent_dim=args.latent_dim,
                                                  tau_s_per_sess=args.tau_s,
                                                  dt_per_sess=args.dt,
                                                  n_layers=args.n_layers,
-                                                 n_heads=args.n_heads).to(args.device)
+                                                 n_heads=args.n_heads,
+                                                 alpha=args.alpha).to(args.device)
 
     if args.target_type == 'freq':
         output_size = 2
@@ -80,7 +86,7 @@ if __name__ == "__main__":
         output_size = 5
         loss_fn = torch.nn.NLLLoss()
     elif args.target_type == 'unsupervised':
-        output_size = args.n_neurons
+        output_size = args.n_neurons * len(neuron_types)
         loss_fn = torch.nn.BCEWithLogitsLoss()
     else:
         raise NotImplementedError
@@ -88,7 +94,7 @@ if __name__ == "__main__":
     decoding_network = get_decoder(output_dim_per_session=output_size * args.tau_f, args=args)
 
     if args.online:
-        args.lr = args.lr / (0.25 * args.dt)
+        args.lr = args.lr / 0.25 * args.dt
     optimizer = torch.optim.Adam(list(encoding_network.parameters())
                                  + list(decoding_network.parameters()), lr=args.lr)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=250, gamma=0.9)
@@ -97,11 +103,12 @@ if __name__ == "__main__":
 
     for epoch in tqdm.tqdm(range(args.n_epochs)):
         train_iterator = iter(train_dl)
-        for inputs, targets in train_iterator:
+        for i, (inputs, targets) in enumerate(train_iterator):
             if args.target_type == 'unsupervised':
                 targets = inputs
             else:
                 targets = targets.unsqueeze(2).repeat_interleave(inputs.shape[-1], dim=-1)
+
             train_on_batch(encoder=encoding_network,
                            decoder=decoding_network,
                            inputs=inputs,

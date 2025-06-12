@@ -5,11 +5,10 @@ import numpy as np
 import torch
 
 from sparks.data.allen.movies_pseudomouse import make_pseudomouse_allen_movies_dataset
-from sparks.scripts.allen_visual.movies.utils.test import test_on_batch
-from sparks.scripts.allen_visual.movies.utils.train import train
 from sparks.models.decoders import get_decoder
 from sparks.models.encoders import HebbianTransformerEncoder
-from sparks.utils.misc import make_res_folder, identity
+from sparks.utils.test import test
+import json
 
 if __name__ == "__main__":
     # setting the hyper parameters
@@ -38,12 +37,9 @@ if __name__ == "__main__":
     parser.add_argument('--tau_p', type=int, default=6, help='Past window size')
     parser.add_argument('--tau_f', type=int, default=1, help='Future window size')
     parser.add_argument('--tau_s', type=float, default=0.5, help='STDP decay')
-    parser.add_argument('--w_pre', type=float, default=0.1, help='')
-    parser.add_argument('--w_post', type=float, default=0.05, help='')
+    parser.add_argument('--alpha', type=float, default=1., help='')
 
     # Data parameters
-    parser.add_argument('--block', type=str, default='first',
-                        choices=['first', 'second', 'across', 'both'], help='From which blocks to use')
     parser.add_argument('--mode', type=str, default='prediction',
                         choices=['prediction', 'reconstruction', 'unsupervised'],
                         help='Which type of task to perform')
@@ -63,7 +59,13 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # Create folder to save results
+    with open(os.path.join(args.weights_folder, 'commandline_args.txt'), 'r') as f:
+        data_string = f.read()
+    data_dict = json.loads(data_string)
+
+    for arg in data_dict.keys():
+        setattr(args, arg, data_dict[arg])
+
     if torch.cuda.is_available():
         args.device = torch.device('cuda')
     elif torch.backends.mps.is_available():
@@ -71,21 +73,20 @@ if __name__ == "__main__":
     else:
         args.device = torch.device('cpu')
 
-    neuron_types = ['VISp', 'VISal', 'VISrl', 'VISpm', 'VISam', 'VISl']
-    (train_dataset, test_dataset,
-     train_dl, test_dl) = make_pseudomouse_allen_movies_dataset(os.path.join(args.home, "datasets/allen_visual/"),
-                                                                neuron_types=neuron_types,
-                                                                n_neurons=args.n_neurons,
-                                                                dt=args.dt,
-                                                                block=args.block,
-                                                                batch_size=args.batch_size,
-                                                                num_workers=args.num_workers,
-                                                                mode=args.mode,
-                                                                ds=args.ds,
-                                                                seed=args.seed)
-
-    input_size = len(train_dataset.good_units_ids)  # n_neurons * len(neuron_types)
-    encoding_network = HebbianTransformerEncoder(n_neurons_per_sess=input_size,
+    neuron_types = ['VISp']
+    correct_units_ids = np.load(os.path.join(args.weights_folder, 'good_units_ids.npy'))
+    dataset, _, dl, _ = make_pseudomouse_allen_movies_dataset(os.path.join(args.home, "datasets/allen_visual/"),
+                                                           neuron_types=neuron_types,
+                                                           n_neurons=args.n_neurons,
+                                                           dt=args.dt,
+                                                           block="all",
+                                                           batch_size=args.batch_size,
+                                                           num_workers=args.num_workers,
+                                                           mode=args.mode,
+                                                           ds=args.ds,
+                                                           correct_units_ids=correct_units_ids)
+    
+    encoding_network = HebbianTransformerEncoder(n_neurons_per_sess=len(dataset.good_units_ids),
                                                  embed_dim=args.embed_dim,
                                                  latent_dim=args.latent_dim,
                                                  tau_s_per_sess=args.tau_s,
@@ -96,15 +97,14 @@ if __name__ == "__main__":
                                                  sliding=args.sliding,
                                                  window_size=args.window_size,
                                                  block_size=args.block_size,
-                                                 w_pre=args.w_pre,
-                                                 w_post=args.w_post).to(args.device)
+                                                 alpha=args.alpha).to(args.device)
 
     if args.mode == 'prediction':
         output_size = 900
     elif args.mode == 'reconstruction':
-        output_size = np.prod(train_dataset.true_frames.shape[:-1])
+        output_size = np.prod(dataset.true_frames.shape[:-1])
     elif args.mode == 'unsupervised':
-        output_size = input_size
+        output_size = args.n_neurons
     else:
         raise NotImplementedError
 
@@ -112,32 +112,32 @@ if __name__ == "__main__":
                                    n_neurons=args.n_neurons, softmax=True if args.mode == 'prediction' else False)
 
     # Load pretrained network and add neural attention layers for additional sessions
-    encoding_network.load_state_dict(torch.load(os.path.join(os.getcwd(), 'results',
-                                                             args.weights_folder, 'encoding_network.pt')))
-    decoding_network.load_state_dict(torch.load(os.path.join(os.getcwd(), 'results',
-                                                             args.weights_folder, 'decoding_network.pt')))
+    encoding_network.load_state_dict(torch.load(os.path.join(args.weights_folder, 'encoding_network.pt')))
+    decoding_network.load_state_dict(torch.load(os.path.join(args.weights_folder, 'decoding_network.pt')))
 
-    encoding_network.eval()
-    decoding_network.eval()
+    if args.mode == 'prediction':
+        loss_fn = torch.nn.NLLLoss()
+    else:
+        loss_fn = torch.nn.BCEWithLogitsLoss()
 
-    for i, neuron_type in enumerate(neuron_types):
-        encoder_outputs = torch.Tensor()
-        decoder_outputs = torch.Tensor()
-        test_iterator = iter(test_dl)
-        for inputs, _ in test_iterator:
-            inputs[:, i * args.n_neurons: (i + 1) * args.n_neurons] = 0
-            loss_batch, encoder_outputs_batch, decoder_outputs_batch = test_on_batch(encoder=encoding_network,
-                                                                                    decoder=decoding_network,
-                                                                                    inputs=inputs,
-                                                                                    latent_dim=args.latent_dim,
-                                                                                    tau_p=args.tau_p,
-                                                                                    tau_f=args.tau_f,
-                                                                                    device=args.device,
-                                                                                    act=torch.sigmoid if args.mode == 'unsupervised' else identity)
-            encoder_outputs = torch.cat((encoder_outputs, encoder_outputs_batch.cpu()), dim=0)
-            decoder_outputs = torch.cat((decoder_outputs, decoder_outputs_batch.cpu()), dim=0)
+    best_test_acc = -np.inf
 
-        np.save(os.path.join(os.getcwd(), 'results', args.weights_folder, 'test_dec_outputs_%s_masked.npy' % neuron_type), 
-                decoder_outputs.numpy())
-        np.save(os.path.join(os.getcwd(), 'results', args.weights_folder, 'test_enc_outputs_%s_masked.npy' % neuron_type), 
-                encoder_outputs.numpy())
+    test_acc, encoder_outputs, decoder_outputs = test(encoder=encoding_network,
+                                                        decoder=decoding_network,
+                                                        test_dls=[dl],
+                                                        true_frames=dataset.true_frames,
+                                                        mode=args.mode,
+                                                        latent_dim=args.latent_dim,
+                                                        tau_p=args.tau_p,
+                                                        tau_f=args.tau_f,
+                                                        dt=args.dt,
+                                                        loss_fn=loss_fn,
+                                                        device=args.device)
+
+    np.save(args.weights_folder + '/test_dec_outputs_all.npy', decoder_outputs.cpu().numpy())
+    np.save(args.weights_folder + '/test_enc_outputs_all.npy', encoder_outputs.cpu().numpy())
+
+    if args.mode == 'prediction':
+        print("test acc: %.3f" % test_acc)
+    else:
+        print("=test loss: %.3f" % -test_acc)

@@ -92,6 +92,12 @@ class AttentionBlock(torch.nn.Module):
         """
         return
 
+    def detach_(self):
+        """
+        For compatibility
+        :return:
+        """
+        return
 
 class TransformerEncoder(torch.nn.Module):
     """

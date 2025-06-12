@@ -60,7 +60,7 @@ if __name__ == "__main__":
 
     train_dataset, train_dl = make_mec_ca_dataset(data_path,
                                                   start_stop_times=start_stop_times_train,
-                                                  downsampling_factor=args.ds,
+                                                  downsampling_factor=1,
                                                   batch_size=args.batch_size,
                                                   train=True,
                                                   num_workers=args.num_workers)
@@ -84,6 +84,8 @@ if __name__ == "__main__":
 
     decoding_network = get_decoder(output_dim_per_session=input_size * args.tau_f, args=args)
 
+    if args.online:
+        args.lr = args.lr / (train_dataset[0][0].shape[-1])
     optimizer = torch.optim.Adam(list(encoding_network.parameters())
                                  + list(decoding_network.parameters()), lr=args.lr)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.8)
@@ -101,6 +103,7 @@ if __name__ == "__main__":
               tau_p=args.tau_p,
               tau_f=args.tau_f,
               beta=args.beta,
+              online=args.online,
               device=args.device)
         scheduler.step()
 

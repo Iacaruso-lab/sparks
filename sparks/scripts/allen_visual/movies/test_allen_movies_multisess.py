@@ -3,6 +3,7 @@ import os
 
 import numpy as np
 import torch
+import json
 
 from sparks.data.allen.movies_singlesess import make_allen_movies_dataset
 from sparks.scripts.allen_visual.movies.utils.test import test
@@ -41,33 +42,43 @@ if __name__ == "__main__":
     # Data parameters
     parser.add_argument('--n_skip_sessions', type=int, default=0, help='First session to consider')
     parser.add_argument('--n_sessions', type=int, default=1, help='How many sessions to use')
-    parser.add_argument('--block', type=str, default='first',
-                        choices=['first', 'second', 'across', 'both'], help='From which blocks to use')
     parser.add_argument('--mode', type=str, default='prediction',
                         choices=['prediction', 'reconstruction', 'unsupervised'],
                         help='Which type of task to perform')
     parser.add_argument('--dt', type=float, default=0.006, help='Time sampling period')
     parser.add_argument('--ds', type=int, default=2, help='Frame downsampling factor')
 
+    parser.add_argument('--weights_folder', type=str, default='')
+
     args = parser.parse_args()
 
-    # Create folder to save results
-    make_res_folder('allen_movies_multisess', os.getcwd(), args)
+    with open(os.path.join(args.weights_folder, 'commandline_args.txt'), 'r') as f:
+        data_string = f.read()
+    data_dict = json.loads(data_string)
+
+    for arg in data_dict.keys():
+        setattr(args, arg, data_dict[arg])
+
+    if torch.cuda.is_available():
+        args.device = torch.device('cuda')
+    elif torch.backends.mps.is_available():
+        args.device = torch.device('mps:0')
+    else:
+        args.device = torch.device('cpu')
 
     # Create datasets and dataloaders
-    (train_datasets, test_datasets,
-     train_dls, test_dls) = make_allen_movies_dataset(os.path.join(args.home, "datasets/allen_visual/"),
-                                                      session_idxs=np.arange(args.n_skip_sessions,
-                                                                             args.n_sessions + args.n_skip_sessions),
-                                                      dt=args.dt,
-                                                      block=args.block,
-                                                      batch_size=args.batch_size,
-                                                      num_workers=args.num_workers,
-                                                      mode=args.mode,
-                                                      ds=args.ds)
+    (_, test_datasets, _, test_dls) = make_allen_movies_dataset(os.path.join(args.home, "datasets/allen_visual/"),
+                                                                session_idxs=np.arange(args.n_skip_sessions,
+                                                                                       args.n_sessions + args.n_skip_sessions),
+                                                                                       dt=args.dt,
+                                                                                       block='all',
+                                                                                       batch_size=args.batch_size,
+                                                                                       num_workers=args.num_workers,
+                                                                                       mode=args.mode,
+                                                                                       ds=args.ds)
 
     # Create encoding/decoding networks
-    input_sizes = [len(train_dataset.good_units_ids) for train_dataset in train_datasets]
+    input_sizes = [len(dataset.good_units_ids) for dataset in test_datasets]
     encoding_network = HebbianTransformerEncoder(n_neurons_per_sess=input_sizes,
                                                  embed_dim=args.embed_dim,
                                                  latent_dim=args.latent_dim,
@@ -80,7 +91,7 @@ if __name__ == "__main__":
     if args.mode == 'prediction':
         output_sizes = 900 * args.tau_f
     elif args.mode == 'reconstruction':
-        output_sizes = [np.prod(train_dataset.targets.shape[:-1]) * args.tau_f for train_dataset in train_datasets]
+        output_sizes = [np.prod(dataset.targets.shape[:-1]) * args.tau_f for dataset in test_datasets]
     elif args.mode == 'unsupervised':
         output_sizes = [input_size * args.tau_f for input_size in input_sizes]
     else:
@@ -93,11 +104,11 @@ if __name__ == "__main__":
                                                     int(np.mean([args.latent_dim * args.tau_p,
                                                                  np.mean(np.mean(output_sizes) * args.tau_f)]))])
 
-    if args.online:
-        args.lr = args.lr / 900
-    optimizer = torch.optim.Adam(list(encoding_network.parameters())
-                                 + list(decoding_network.parameters()), lr=args.lr)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.8)
+    # Load pretrained network and add neural attention layers for additional sessions
+    encoding_network.load_state_dict(torch.load(os.path.join(os.getcwd(), 'results',
+                                                             args.weights_folder, 'encoding_network.pt')))
+    decoding_network.load_state_dict(torch.load(os.path.join(os.getcwd(), 'results',
+                                                             args.weights_folder, 'decoding_network.pt')))
 
     if args.mode == 'prediction':
         loss_fn = torch.nn.NLLLoss()
@@ -106,28 +117,22 @@ if __name__ == "__main__":
 
     best_test_acc = -np.inf
 
-    for epoch in range(args.n_epochs):
-        train(encoder=encoding_network, decoder=decoding_network, train_dls=train_dls, loss_fn=loss_fn,
-              optimizer=optimizer, latent_dim=args.latent_dim, tau_p=args.tau_p, mode=args.mode,
-              tau_f=args.tau_f, device=args.device, dt=args.dt, online=args.online, beta=args.beta)
-        scheduler.step()
+    test_acc, encoder_outputs, decoder_outputs = test(encoder=encoding_network,
+                                                        decoder=decoding_network,
+                                                        test_dls=test_dls,
+                                                        true_frames=test_datasets[0].true_frames,
+                                                        mode=args.mode,
+                                                        latent_dim=args.latent_dim,
+                                                        tau_p=args.tau_p,
+                                                        tau_f=args.tau_f,
+                                                        dt=args.dt,
+                                                        loss_fn=loss_fn,
+                                                        device=args.device)
 
-        if (epoch + 1) % args.test_period == 0:
-            test_acc, encoder_outputs, decoder_outputs = test(encoder=encoding_network,
-                                                              decoder=decoding_network,
-                                                              test_dls=test_dls,
-                                                              true_frames=test_datasets[0].true_frames,
-                                                              mode=args.mode,
-                                                              latent_dim=args.latent_dim,
-                                                              tau_p=args.tau_p,
-                                                              tau_f=args.tau_f,
-                                                              dt=args.dt,
-                                                              loss_fn=loss_fn,
-                                                              device=args.device)
+    np.save(args.weights_folder + '/test_dec_outputs_all.npy', decoder_outputs.cpu().numpy())
+    np.save(args.weights_folder + '/test_enc_outputs_all.npy', encoder_outputs.cpu().numpy())
 
-            best_test_acc = save_results(args.results_path, test_acc, best_test_acc, encoder_outputs,
-                                         decoder_outputs, encoding_network, decoding_network)
-            if args.mode == 'prediction':
-                print("Epoch %d, test acc: %.3f" % (epoch, test_acc))
-            else:
-                print("Epoch %d, test loss: %.3f" % (epoch, -test_acc))
+    if args.mode == 'prediction':
+        print("test acc: %.3f" % test_acc)
+    else:
+        print("=test loss: %.3f" % -test_acc)

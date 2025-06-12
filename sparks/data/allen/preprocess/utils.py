@@ -104,21 +104,18 @@ def get_movies_data_for_session(cache,
     return spikes_session
 
 
-def get_trials_idxs_by_condition(stim_cond, expected_num_stims=-1, stim_type='static_gratings'):
+def get_trials_idxs_by_condition(stim_cond, stim_types=['static_gratings']):
     idxs_per_condition = {}
 
-    if stim_type == 'natural_scenes':
+    if stim_types == ['natural_scenes']:
         stim_id = stim_cond['frame'].values.astype(int)
     else:
         stim_id = stim_cond['stimulus_condition_id'].values.astype(int)
     unique_conditions = np.unique(stim_id)
 
-    if (expected_num_stims > 0) and (len(unique_conditions) != expected_num_stims):
-        return None
 
     for cond in unique_conditions:
-        idxs = np.where(stim_id == cond)[0]
-        idxs_per_condition[cond] = idxs
+        idxs_per_condition[cond] = np.where(stim_id == cond)[0]
 
     return idxs_per_condition
 
@@ -149,36 +146,35 @@ def get_gratings_spikes_for_session(session, neuron_types, start_stop_times, min
     return spikes_session
 
 
-def preprocess_gratings_session(cache, session_id, stim_type='static_gratings',
-                                neuron_types=['VISp'], min_snr=1.5, expected_num_stims=121):
+def preprocess_gratings_session(cache, session_id, stim_types=['static_gratings', 'drifting_gratings', 'flashes'],
+                                neuron_types=['VISp'], min_snr=1.5):
 
     session = cache.get_session_data(session_id)
     all_stims = session.stimulus_presentations
-    correct_stims = all_stims[all_stims['stimulus_name'] == stim_type]
+    correct_stims = all_stims[np.isin(all_stims['stimulus_name'], stim_types)]
     start_stop_times = correct_stims[['start_time', 'stop_time']].values
     spikes_session = get_gratings_spikes_for_session(session, neuron_types, start_stop_times, min_snr)
-    trials_idxs_per_condition = get_trials_idxs_by_condition(correct_stims, expected_num_stims, stim_type)
+    trials_idxs_per_condition = get_trials_idxs_by_condition(correct_stims, stim_types)
 
     return trials_idxs_per_condition, spikes_session
 
 
 def preprocess_gratings(cache,
                         session_ids,
-                        stim_type='static_gratings',
+                        stim_types=['static_gratings', 'drifting_gratings', 'flashes'],
                         neuron_types=['VISp'],
                         min_snr=1.5,
-                        expected_num_stims=121):
+                        expected_num_trials=164):
     spikes_per_cond = {}
     units_ids = []
 
     for session_id in tqdm.tqdm(session_ids):
         trials_idxs_per_condition, spikes_session = preprocess_gratings_session(cache=cache,
                                                                                 session_id=session_id,
-                                                                                stim_type=stim_type,
+                                                                                stim_types=stim_types,
                                                                                 neuron_types=neuron_types,
-                                                                                min_snr=min_snr,
-                                                                                expected_num_stims=expected_num_stims)
-        if trials_idxs_per_condition is not None:
+                                                                                min_snr=min_snr)
+        if len(trials_idxs_per_condition.keys()) >= expected_num_trials:
             for cond in trials_idxs_per_condition.keys():
                 if cond in spikes_per_cond.keys():
                     spikes_per_cond[cond].update({unit_id: [spikes_session[unit_id][trial]
@@ -190,11 +186,5 @@ def preprocess_gratings(cache,
                                              for unit_id in spikes_session.keys()}
 
             units_ids.append(list(spikes_session.keys()))
-
-    assert len(spikes_per_cond.keys()) == expected_num_stims, ("Error: number of stims found (%d) doesn't match "
-                                                               "the expected number (%d)." % (
-                                                               len(spikes_per_cond.keys()),
-                                                               expected_num_stims))
-
 
     return spikes_per_cond, units_ids

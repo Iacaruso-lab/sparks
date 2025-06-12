@@ -78,7 +78,7 @@ def test(encoder: torch.nn.Module,
 
     for i, test_dl in tqdm.tqdm(enumerate(test_dls)):
         test_iterator = iter(test_dl)
-        for inputs, targets in tqdm.tqdm(test_iterator):
+        for inputs, targets in test_iterator:
             test_loss, encoder_outputs_batch, decoder_outputs_batch = test_on_batch(encoder=encoder,
                                                                                     decoder=decoder,
                                                                                     inputs=inputs,
@@ -156,7 +156,7 @@ def test_on_batch(encoder: torch.nn.Module,
                                                                   sess_id=sess_id)
         decoder_outputs_batch = torch.cat((decoder_outputs_batch,
                                            act(decoder_outputs).unsqueeze(2)), dim=-1)
-
+    
         if loss_fn is not None:
             if t < T - tau_f + 1:
                 target = targets[..., t:t + tau_f].reshape(targets.shape[0], -1).to(device)
@@ -165,5 +165,5 @@ def test_on_batch(encoder: torch.nn.Module,
                 test_loss += loss_fn(decoder_outputs, target).cpu() / (T - tau_f + 1)
         else:
             test_loss = None
-
+    
     return test_loss, encoder_outputs_batch.cpu(), decoder_outputs_batch.cpu()

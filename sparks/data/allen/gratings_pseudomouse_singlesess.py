@@ -1,12 +1,15 @@
 import os
-from typing import Any
+from typing import Any, List
 import pickle
 from collections import ChainMap
 
+from allensdk.brain_observatory.ecephys.ecephys_project_cache import EcephysProjectCache
 import numpy as np
 import torch
 
 from sparks.data.allen.utils import sample_correct_unit_ids, make_spike_histogram
+from sparks.data.allen.gratings_pseudomouse import AllenGratingsPseudoMouseDataset
+from sparks.data.allen.preprocess.utils import get_correct_units
 
 
 def load_preprocessed_spikes(data_dir, neuron_type, min_snr=1.5):
@@ -79,8 +82,8 @@ def make_spikes_and_targets(spikes, units_ids, all_units_ids, target_type, p_tra
 
 
 def make_gratings_dataset(data_dir: os.path,
-                          n_neurons: int = 50,
-                          neuron_types: str = 'VISp',
+                          session_idxs: np.ndarray = np.array([0]),
+                          neuron_types: List = ['VISp'],
                           min_snr: float = 1.5,
                           dt: float = 0.01,
                           p_train: float = 0.8,
@@ -132,6 +135,12 @@ def make_gratings_dataset(data_dir: os.path,
         DataLoader object for test data.
     """
 
+    manifest_path = os.path.join(data_dir, "manifest.json")
+    cache = EcephysProjectCache.from_warehouse(manifest=manifest_path)
+    sessions = cache.get_session_table().index.to_numpy()
+    session_ids = sessions[session_idxs]
+
+    train_datasets, test_datasets, train_dls, test_dls = [], [], [], []
 
     desired_conds = [4791, 4818, 4862, 4863,
                      4826, 4831, 4838, 4890,
@@ -141,90 +150,39 @@ def make_gratings_dataset(data_dir: os.path,
                      246, 250, 252, 258, 259,
                      264, 265, 266, 271, 274, 244]  # all trial conditions for gratings
     
-    all_spikes = {cond: {} for cond in desired_conds}
-    units_ids = []
-    all_units_ids = []
+    for session_id in session_ids:
+        correct_units_ids = get_correct_units(cache.get_session_data(session_id), neuron_types, min_snr=min_snr)
+        all_spikes = {cond: {} for cond in desired_conds}
+        units_ids = []
+        all_units_ids = []
 
-    
-    for neuron_type in neuron_types:
-        spikes_neuron_type, units_ids_neuron_type = load_preprocessed_spikes(data_dir, neuron_type, min_snr=min_snr)
-        if correct_units_ids is not None:
+        for neuron_type in neuron_types:
+            spikes_neuron_type, units_ids_neuron_type = load_preprocessed_spikes(data_dir, neuron_type, min_snr=min_snr)
             correct_units_ids_neuron_type = np.intersect1d(units_ids_neuron_type, correct_units_ids)
-        else:
-            correct_units_ids_neuron_type = None
-        correct_units_ids_neuron_type = sample_correct_unit_ids(units_ids_neuron_type, n_neurons,
-                                                                seed, correct_units_ids=correct_units_ids_neuron_type)
+            for cond in desired_conds:
+                all_spikes[cond].update(spikes_neuron_type[cond])
+            units_ids.append(correct_units_ids_neuron_type)
+            all_units_ids.append(units_ids_neuron_type)
 
-        for cond in desired_conds:
-            all_spikes[cond].update(spikes_neuron_type[cond])
-        units_ids.append(correct_units_ids_neuron_type)
-        all_units_ids.append(units_ids_neuron_type)
+        units_ids = np.concatenate(units_ids)
+        all_units_ids = np.concatenate(all_units_ids)
 
-    units_ids = np.concatenate(units_ids)
-    all_units_ids = np.concatenate(all_units_ids)
+        spikes_train, spikes_test, targets_train, targets_test = make_spikes_and_targets(all_spikes, units_ids,
+                                                                                         all_units_ids,
+                                                                                         target_type, p_train)
 
-    spikes_train, spikes_test, targets_train, targets_test = make_spikes_and_targets(all_spikes, units_ids, 
-                                                                                     all_units_ids,
-                                                                                     target_type, p_train)
+        dataset_train = AllenGratingsPseudoMouseDataset(spikes_train, targets_train, units_ids, dt)
+        train_datasets.append(dataset_train)
 
-    dataset_train = AllenGratingsPseudoMouseDataset(spikes_train, targets_train, units_ids, dt)
+        train_dl = torch.utils.data.DataLoader(dataset_train, batch_size=batch_size, shuffle=True,
+                                            num_workers=num_workers)
+        train_dls.append(train_dl)
 
-    train_dl = torch.utils.data.DataLoader(dataset_train, batch_size=batch_size, shuffle=True,
-                                           num_workers=num_workers)
-    dataset_test = AllenGratingsPseudoMouseDataset(spikes_test, targets_test, units_ids, dt)
-    test_dl = torch.utils.data.DataLoader(dataset_test, batch_size=batch_size, shuffle=False,
-                                          num_workers=num_workers)
-    return dataset_train, train_dl, dataset_test, test_dl
+        dataset_test = AllenGratingsPseudoMouseDataset(spikes_test, targets_test, units_ids, dt)
+        test_datasets.append(dataset_test)
 
+        test_dl = torch.utils.data.DataLoader(dataset_test, batch_size=batch_size, shuffle=False,
+                                            num_workers=num_workers)
+        test_dls.append(test_dl)
 
-class AllenGratingsPseudoMouseDataset(torch.utils.data.Dataset):
-    def __init__(self,
-                 spikes: dict,
-                 conds: np.ndarray,
-                 good_units_ids: np.ndarray,
-                 dt: float = 0.01) -> None:
-
-        """
-        Initializes the AllenGratingsPseudoMouseDataset instance.
-
-        Parameters
-        ----------
-        spikes : dict
-            Dictionary containing spike instances.
-        conds : np.ndarray
-            Array containing the conditions.
-        good_units_ids : np.ndarray
-            Array containing IDs of good neural units.
-        dt : float, optional
-            Time step, default is 0.01.
-        """
-
-        super(AllenGratingsPseudoMouseDataset).__init__()
-
-        self.dt = dt
-        self.good_units_ids = good_units_ids
-        self.spikes = spikes
-        self.num_neurons = len(good_units_ids)
-
-        self.targets = torch.tensor(conds)
-        self.num_targets = len(np.unique(self.targets))
-
-    def __len__(self):
-        return len(self.spikes[self.good_units_ids[0]])
-
-    def get_spikes(self, idx):
-        """
-        Get all spikes for a given presentation of the movie
-        """
-
-        time_bin_edges = np.arange(0, 0.25 + self.dt, self.dt)
-        return make_spike_histogram(idx, self.good_units_ids, self.spikes, time_bin_edges)
-
-    def __getitem__(self, index: int) -> Any:
-        """
-        :param: index: int
-         Index
-        :return: spikes histogram for the given index
-        """
-
-        return self.get_spikes(index), self.targets[index]
+    return train_datasets, train_dls, test_datasets, test_dls

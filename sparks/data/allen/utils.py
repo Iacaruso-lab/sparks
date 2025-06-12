@@ -33,6 +33,9 @@ def get_train_test_indices(block, mode):
         else:
             train_indices = np.concatenate((np.arange(9), np.arange(10, 19)))
             test_indices = np.array([9, 19])
+    elif block == 'all':
+        train_indices = np.arange(20)
+        test_indices = np.arange(20)
     else:
         raise NotImplementedError
 
@@ -46,6 +49,7 @@ def make_spikes_dict(all_spikes, indices, units_ids):
 def sample_correct_unit_ids(all_units_ids, n_neurons, seed, correct_units_ids=None):
     if seed is not None:
         np.random.seed(seed)
+
     if correct_units_ids is None:
         correct_units_ids = np.random.choice(all_units_ids, n_neurons, replace=False)
 

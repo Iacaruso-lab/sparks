@@ -5,12 +5,13 @@ import numpy as np
 import torch
 import tqdm
 
-from sparks.data.allen.gratings_pseudomouse import make_gratings_dataset
+from sparks.data.allen.gratings_pseudomouse_singlesess import make_gratings_dataset
 from sparks.models.decoders import get_decoder
 from sparks.models.encoders import HebbianTransformerEncoder
 from sparks.utils.misc import make_res_folder, save_results
 from sparks.utils.test import test_on_batch
 from sparks.utils.train import train_on_batch
+from sparks.utils.misc import LongCycler
 
 if __name__ == "__main__":
     # setting the hyper parameters
@@ -39,58 +40,48 @@ if __name__ == "__main__":
     parser.add_argument('--tau_s', type=float, default=0.5, help='STDP decay')
 
     # data
-    parser.add_argument('--n_neurons', type=int, default=100)
+    parser.add_argument('--n_skip_sessions', type=int, default=0, help='First session to consider')
+    parser.add_argument('--n_sessions', type=int, default=1, help='How many sessions to use')
     parser.add_argument('--target_type', type=str, default='freq', choices=['freq', 'class', 'unsupervised'],
-                    help='Type of target to predict: either spatial frequencies or class index')
-    parser.add_argument('--num_examples_train', type=int, default=40, help='Number of training example')
+                        help='Type of target to predict: either spatial frequencies or class index')
+    parser.add_argument('--p_train', type=float, default=0.8, help='Number of training example')
     parser.add_argument('--dt', type=float, default=0.001, help='time bins period')
     parser.add_argument('--seed', type=int, default=None, help='random seed for reproducibility')
 
     args = parser.parse_args()
 
-    make_res_folder('allen_gratings_pseudomouse_cell_types_' + args.target_type, os.getcwd(), args)
+    make_res_folder('allen_gratings_multisess_' + args.target_type, os.getcwd(), args)
 
     neuron_types = ['VISp', 'VISal', 'VISrl', 'VISpm', 'VISam', 'VISl']
-    train_datasets = []
-    test_datasets = []
-    train_dls = []
-    test_dls = []
+    (train_datasets, train_dls, 
+     test_datasets, test_dls) = make_gratings_dataset(os.path.join(args.home, "datasets/allen_visual/"),
+                                                      session_idxs=np.arange(args.n_skip_sessions,
+                                                      args.n_sessions + args.n_skip_sessions),
+                                                      dt=args.dt,
+                                                      neuron_types=neuron_types,
+                                                      p_train=args.p_train,
+                                                      num_workers=args.num_workers,
+                                                      batch_size=args.batch_size,
+                                                      target_type=args.target_type,
+                                                      seed=args.seed)
 
-    for neuron_type in neuron_types:
-        (train_dataset, train_dl,
-        test_dataset, test_dl) = make_gratings_dataset(os.path.join(args.home, "datasets/allen_visual/"),
-                                                        n_neurons=args.n_neurons,
-                                                        dt=args.dt,
-                                                        neuron_type=neuron_type,
-                                                        num_examples_train=args.num_examples_train,
-                                                        num_examples_test=0,
-                                                        batch_size=args.batch_size,
-                                                        num_workers=args.num_workers,
-                                                        target_type=args.target_type,
-                                                        seed=args.seed)
-    
-        train_datasets.append(train_dataset)
-        test_datasets.append(test_dataset)
-        train_dls.append(train_dl)
-        test_dls.append(test_dl)
-        np.save(args.results_path + '/good_units_ids_%s.npy' % neuron_type, train_dataset.good_units_ids)
-
-    encoding_network = HebbianTransformerEncoder(n_neurons_per_sess=args.n_neurons,
+    input_sizes = [len(train_dataset.good_units_ids) for train_dataset in train_datasets]
+    encoding_network = HebbianTransformerEncoder(n_neurons_per_sess=input_sizes,
                                                  embed_dim=args.embed_dim,
                                                  latent_dim=args.latent_dim,
                                                  tau_s_per_sess=args.tau_s,
                                                  dt_per_sess=args.dt,
                                                  n_layers=args.n_layers,
                                                  n_heads=args.n_heads).to(args.device)
-
+    print(f"Input sizes per session: {input_sizes}")
     if args.target_type == 'freq':
-        output_size = 1
+        output_size = 2
         loss_fn = torch.nn.BCEWithLogitsLoss()
     elif args.target_type == 'class':
         output_size = 5
         loss_fn = torch.nn.NLLLoss()
     elif args.target_type == 'unsupervised':
-        output_size = args.n_neurons
+        output_size = [input_size * args.tau_f for input_size in input_sizes]
         loss_fn = torch.nn.BCEWithLogitsLoss()
     else:
         raise NotImplementedError
@@ -105,13 +96,16 @@ if __name__ == "__main__":
 
     loss_best = np.inf
 
-    for epoch in range(args.n_epochs):
-        train_iterator = iter(train_dl)
-        for inputs, targets in tqdm.tqdm(train_iterator):
+    for epoch in tqdm.tqdm(range(args.n_epochs)):
+        random_order = np.random.choice(np.arange(len(train_dls)), size=len(train_dls), replace=False)
+        train_iterator = LongCycler([train_dls[i] for i in random_order])
+
+        for i, (inputs, targets) in enumerate(train_iterator):
             if args.target_type == 'unsupervised':
                 targets = inputs
             else:
-                targets = targets.unsqueeze(1).repeat_interleave(inputs.shape[-1], dim=-1)
+                targets = targets.unsqueeze(2).repeat_interleave(inputs.shape[-1], dim=-1)
+
             train_on_batch(encoder=encoding_network,
                            decoder=decoding_network,
                            inputs=inputs,
@@ -123,24 +117,25 @@ if __name__ == "__main__":
                            tau_f=args.tau_f,
                            device=args.device,
                            online=args.online,
+                           sess_id=random_order[i % len(train_dls)],
                            beta=args.beta)
 
         if (epoch + 1) % args.test_period == 0:
-            test_loss = 0
             all_encoder_outputs = []
             all_decoder_outputs = []
+            mean_test_loss = 0
 
-            test_iterators = [iter(test_dl) for test_dl in test_dls]
-
-            for test_iterator in test_iterators:
+            for test_dl in test_dls:
+                test_iterator = iter(test_dl)
                 encoder_outputs = torch.Tensor()
                 decoder_outputs = torch.Tensor()
+                test_loss = 0
 
                 for inputs, targets in test_iterator:
                     if args.target_type == 'unsupervised':
                         targets = inputs
                     else:
-                        targets = targets.unsqueeze(1).repeat_interleave(inputs.shape[-1], dim=-1)
+                        targets = targets.unsqueeze(2).repeat_interleave(inputs.shape[-1], dim=-1)
                     test_loss, encoder_outputs_batch, decoder_outputs_batch = test_on_batch(encoder=encoding_network,
                                                                                             decoder=decoding_network,
                                                                                             inputs=inputs,
@@ -153,26 +148,29 @@ if __name__ == "__main__":
                                                                                             device=args.device,
                                                                                             act=torch.sigmoid)
 
-                    encoder_outputs = torch.cat((encoder_outputs, encoder_outputs_batch.cpu()), dim=0)
-                    decoder_outputs = torch.cat((decoder_outputs, decoder_outputs_batch.cpu()), dim=0)
-                
-                all_encoder_outputs.append(encoder_outputs)
-                all_decoder_outputs.append(decoder_outputs)
+                    encoder_outputs = torch.cat((encoder_outputs, encoder_outputs_batch), dim=0)
+                    decoder_outputs = torch.cat((decoder_outputs, decoder_outputs_batch), dim=0)
 
-            print('Avg test loss: ', test_loss)
-            if test_loss < loss_best:
-                loss_best = test_loss
-                np.save(args.results_path + '/test_loss.npy', test_loss)
+                mean_test_loss += test_loss.item()
+                all_encoder_outputs.append(encoder_outputs.cpu().numpy())
+                all_decoder_outputs.append(decoder_outputs.cpu().numpy())
+
+            mean_test_loss /= len(test_dls)
+            print(f"Epoch {epoch + 1}/{args.n_epochs}, Test Loss: {mean_test_loss:.4f}")
+
+            if mean_test_loss <= loss_best:
+                loss_best = mean_test_loss
                 torch.save(encoding_network.state_dict(), args.results_path + '/encoding_network.pt')
                 torch.save(decoding_network.state_dict(), args.results_path + '/decoding_network.pt')
-                for i, neuron_type in enumerate(neuron_types):
-                    np.save(args.results_path + '/test_enc_outputs_best_%s.npy' % neuron_type, 
-                            all_encoder_outputs[i].numpy())
-                    np.save(args.results_path + '/test_dec_outputs_best_%s.npy' % neuron_type,
-                            all_decoder_outputs[i].numpy())
+
+                for i in range(len(test_dls)):
+                    np.save(args.results_path + '/test_enc_outputs_best_%s.npy' % neuron_types[i],
+                            all_decoder_outputs[i])
+                    np.save(args.results_path + '/test_dec_outputs_best_%s.npy' % neuron_types[i], 
+                            all_decoder_outputs[i])
             else:
-                for i, neuron_type in enumerate(neuron_types):
-                    np.save(args.results_path + '/test_enc_outputs_last_%s.npy' % neuron_type, 
-                            all_encoder_outputs[i].numpy())
-                    np.save(args.results_path + '/test_dec_outputs_last_%s.npy' % neuron_type,
-                            all_decoder_outputs[i].numpy())
+                for i in range(len(test_dls)):
+                    np.save(args.results_path + '/test_enc_outputs_last_%s.npy' % neuron_types[i],
+                            all_encoder_outputs[i])
+                    np.save(args.results_path + '/test_dec_outputs_last_%s.npy' % neuron_types[i],
+                            all_decoder_outputs[i])

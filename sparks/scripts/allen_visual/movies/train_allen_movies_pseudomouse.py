@@ -20,7 +20,7 @@ if __name__ == "__main__":
     parser.add_argument('--n_epochs', type=int, default=200, help='Number of training epochs')
     parser.add_argument('--test_period', type=int, default=5, help='Test period in number of epochs')
     parser.add_argument('--lr', type=float, default=0.001, help='Learning rate')
-    parser.add_argument('--beta', type=float, default=0.001, help='KLD regularisation')
+    parser.add_argument('--beta', type=float, default=0.000001, help='KLD regularisation')
     parser.add_argument('--batch_size', type=int, default=9, help='Batch size')
     parser.add_argument('--num_workers', type=int, default=0, help='For dataloading')
     parser.add_argument('--online', action='store_true', default=False,
@@ -37,9 +37,8 @@ if __name__ == "__main__":
                           help='Output architecture for the decoder')
     parser.add_argument('--tau_p', type=int, default=6, help='Past window size')
     parser.add_argument('--tau_f', type=int, default=1, help='Future window size')
-    parser.add_argument('--tau_s', type=float, default=0.5, help='STDP decay')
-    parser.add_argument('--w_pre', type=float, default=0.1, help='')
-    parser.add_argument('--w_post', type=float, default=0.05, help='')
+    parser.add_argument('--tau_s', type=float, default=1., help='STDP decay')
+    parser.add_argument('--alpha', type=float, default=1., help='')
 
     # Data parameters
     parser.add_argument('--block', type=str, default='first',
@@ -63,10 +62,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Create folder to save results
-    make_res_folder('allen_movies_pseudomouse_' + args.data_type + '_' + args.mode + '_nneurons_' + str(args.n_neurons),
+    make_res_folder('allen_movies_pseudomouse_' + '_alpha_' + str(args.alpha) + '_' + args.mode + '_nneurons_' + str(args.n_neurons),
                     os.getcwd(), args)
 
-    neuron_types = ['VISp', 'VISal', 'VISrl', 'VISpm', 'VISam', 'VISl']
+    neuron_types = ['VISp']
     (train_dataset, test_dataset,
      train_dl, test_dl) = make_pseudomouse_allen_movies_dataset(os.path.join(args.home, "datasets/allen_visual/"),
                                                                 neuron_types=neuron_types,
@@ -92,8 +91,7 @@ if __name__ == "__main__":
                                                  sliding=args.sliding,
                                                  window_size=args.window_size,
                                                  block_size=args.block_size,
-                                                 w_pre=args.w_pre,
-                                                 w_post=args.w_post).to(args.device)
+                                                 alpha=args.alpha).to(args.device)
 
     if args.mode == 'prediction':
         output_size = 900

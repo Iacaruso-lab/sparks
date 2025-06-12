@@ -90,7 +90,7 @@ def save_results(results_path: str,
         best_test_acc (float): The updated best test accuracy.
     """
 
-    if test_acc > best_test_acc:
+    if test_acc >= best_test_acc:
         best_test_acc = test_acc
         np.save(results_path + '/test_acc.npy', test_acc)
         np.save(results_path + '/test_enc_outputs_best.npy', encoder_outputs.cpu().numpy())
