@@ -86,7 +86,7 @@ if __name__ == "__main__":
                                                  dt_per_sess=args.dt,
                                                  n_layers=args.n_layers,
                                                  n_heads=args.n_heads).to(args.device)
-    print(f"Input sizes per session: {input_sizes}")
+
     if args.target_type == 'freq':
         output_size = 2
         loss_fn = torch.nn.BCEWithLogitsLoss()
@@ -101,60 +101,57 @@ if __name__ == "__main__":
 
     decoding_network = get_decoder(output_dim_per_session=output_size * args.tau_f, args=args)
 
-    if args.online:
-        args.lr = args.lr / (0.25 * args.dt)
-    optimizer = torch.optim.Adam(list(encoding_network.parameters())
-                                 + list(decoding_network.parameters()), lr=args.lr)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=250, gamma=0.9)
-
-    loss_best = np.inf
 
     # Load pretrained network and add neural attention layers for additional sessions
     encoding_network.load_state_dict(torch.load(os.path.join(args.weights_folder, 'encoding_network.pt')))
     decoding_network.load_state_dict(torch.load(os.path.join(args.weights_folder, 'decoding_network.pt')))
 
     with torch.no_grad():
-        attention_coeffs = torch.Tensor()
-        train_iterator = LongCycler(train_dls)
-        for inputs, targets in train_iterator:
-            targets = targets.unsqueeze(2).repeat_interleave(inputs.shape[-1], dim=-1)
-            encoder_outputs_batch, _, T = test_init(encoder=encoding_network,
-                                                    inputs=inputs,
-                                                    latent_dim=args.latent_dim,
-                                                    tau_p=args.tau_p,
-                                                    device=args.device)
+        for i, train_dl in enumerate(train_dls):
+            train_iterator = iter(train_dl)
+            attention_coeffs = torch.Tensor()
+            for inputs, targets in train_iterator:
+                targets = targets.unsqueeze(2).repeat_interleave(inputs.shape[-1], dim=-1)
+                encoder_outputs_batch, _, T = test_init(encoder=encoding_network,
+                                                        inputs=inputs,
+                                                        latent_dim=args.latent_dim,
+                                                        tau_p=args.tau_p,
+                                                        device=args.device)
 
-            for t in range(T):
-                encoder_outputs_batch, _, _, _ = ae_forward(encoder=encoding_network,
-                                                            decoder=decoding_network,
-                                                            inputs=inputs[..., t],
-                                                            encoder_outputs=encoder_outputs_batch,
-                                                            tau_p=args.tau_p,
-                                                            device=args.device)
+                for t in range(T):
+                    encoder_outputs_batch, _, _, _ = ae_forward(encoder=encoding_network,
+                                                                decoder=decoding_network,
+                                                                inputs=inputs[..., t],
+                                                                encoder_outputs=encoder_outputs_batch,
+                                                                tau_p=args.tau_p,
+                                                                device=args.device,
+                                                                sess_id=i)
 
-            attention_coeffs = torch.cat((attention_coeffs,
-                                        encoding_network.hebbian_attn_blocks[0].attention_layer.heads[0].attention.data.cpu()), dim=0)
-        np.save(os.path.join(args.weights_folder, 'train_attention_coeffs.npy'), attention_coeffs.numpy())
+                attention_coeffs = torch.cat((attention_coeffs,
+                                              encoding_network.hebbian_attn_blocks[0].attention_layer.heads[0].attention.data.cpu()), dim=0)
+            np.save(os.path.join(args.weights_folder, 'train_attention_coeffs_sess_%d.npy' % i), attention_coeffs.numpy())
 
-        attention_coeffs = torch.Tensor()
-        test_iterator = LongCycler(test_dls)
-        for inputs, targets in test_iterator:
-            targets = targets.unsqueeze(2).repeat_interleave(inputs.shape[-1], dim=-1)
-            encoder_outputs_batch, _, T = test_init(encoder=encoding_network,
-                                                    inputs=inputs,
-                                                    latent_dim=args.latent_dim,
-                                                    tau_p=args.tau_p,
-                                                    device=args.device)
+        for i, test_dl in enumerate(test_dls):
+            test_iterator = iter(test_dl)
+            attention_coeffs = torch.Tensor()
+            for inputs, targets in test_iterator:
+                targets = targets.unsqueeze(2).repeat_interleave(inputs.shape[-1], dim=-1)
+                encoder_outputs_batch, _, T = test_init(encoder=encoding_network,
+                                                        inputs=inputs,
+                                                        latent_dim=args.latent_dim,
+                                                        tau_p=args.tau_p,
+                                                        device=args.device)
 
-            for t in range(T):
-                encoder_outputs_batch, _, _, _ = ae_forward(encoder=encoding_network,
-                                                            decoder=decoding_network,
-                                                            inputs=inputs[..., t],
-                                                            encoder_outputs=encoder_outputs_batch,
-                                                            tau_p=args.tau_p,
-                                                            device=args.device)
+                for t in range(T):
+                    encoder_outputs_batch, _, _, _ = ae_forward(encoder=encoding_network,
+                                                                decoder=decoding_network,
+                                                                inputs=inputs[..., t],
+                                                                encoder_outputs=encoder_outputs_batch,
+                                                                tau_p=args.tau_p,
+                                                                device=args.device,
+                                                                sess_id=i)
 
-            attention_coeffs = torch.cat((attention_coeffs,
-                                        encoding_network.hebbian_attn_blocks[0].attention_layer.heads[0].attention.data.cpu()), dim=0)
+                attention_coeffs = torch.cat((attention_coeffs,
+                                            encoding_network.hebbian_attn_blocks[0].attention_layer.heads[0].attention.data.cpu()), dim=0)
 
-        np.save(os.path.join(args.weights_folder, 'test_attention_coeffs.npy'), attention_coeffs.numpy())
+            np.save(os.path.join(args.weights_folder, 'test_attention_coeffs_sess_%d.npy' % i), attention_coeffs.numpy())

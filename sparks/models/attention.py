@@ -23,7 +23,7 @@ class HebbianAttentionLayer(torch.nn.Module):
                  max_attn_value: float = 1.5):
 
         """
-        HebbianAttentionLayer
+        HebbianAttentionLayer class.
 
         Args:
             n_total_neurons (int): Total number of neurons.

@@ -1,4 +1,4 @@
-from typing import Any, Optional, Union, List, Tuple
+from typing import List, Union, Optional, Type, Dict, Any, Tuple
 
 import numpy as np
 import torch
@@ -101,7 +101,29 @@ class HebbianTransformerBlock(nn.Module):
         self.attention_layer.zero_()
 
 
-class HebbianTransformerEncoder(nn.Module):
+class HebbianTransformer(nn.Module):
+    """
+    Initialize a Hebbian Transformer Encoder.
+
+    This transformer encoder includes a Hebbian Attention Block, and optional conventional attention blocks.
+
+
+    Args:
+        n_neurons_per_sess (Union[int, List[int]]): Number of input neurons for one or more sessions.
+        embed_dim (int): The embedding dimension for the attention mechanism.
+        latent_dim (int): The dimensionality of the latent space.
+        id_per_sess (Optional[List[Union[str, int]]]): Unique identifiers for each session.
+                                                    If None, defaults to `[0, 1, ..., N-1]`.
+        hebbian_config (HebbianConfig): Configuration for the Hebbian attention block.
+        attention_config (AttentionConfig): Configuration for conventional attention layers.
+        projection_config (ProjectionConfig): Configuration for the final output projection head.
+        share_projection_head (bool): If True, all sessions share a single projection head.
+                                    Requires all sessions to have the same number of neurons.
+        device (torch.device): The device for computations.
+
+    Returns:
+        None
+    """
     def __init__(self,
                  n_neurons_per_sess: Union[int, List[int]],
                  embed_dim: int,
@@ -121,44 +143,8 @@ class HebbianTransformerEncoder(nn.Module):
                  window_size: int = 1,
                  block_size: int = 1,
                  device: torch.device = torch.device('cpu')):
-        """
-        Initialize a Hebbian Transformer Encoder.
 
-        This transformer encoder includes a Hebbian Attention Block, and optional conventional attention blocks.
-
-
-        Args:
-            n_neurons_per_sess (Union[int, List[int]]): Number of input neurons per session.
-                                                        By passing a list, the model can learn to embed the data
-                                                        from several sessions and animals within the same latent space
-            embed_dim (int): The number of dimensions for the attention embeddings.
-            latent_dim (int): The number of dimensions of the latent space.
-            tau_s_per_sess (Union[float, List[float]]): The time constant for attention for each session.
-            dt_per_sess (int): The time-step for attention update for each session.
-            n_layers (Optional, int): The number of conventional attention layers. Default is 0.
-            output_type (str, optional): defines the type of output (i.e., 'flatten'). Defaults to 'flatten'.
-                                        If 'flatten': flattens the output of the last attention block and projects it
-                                        onto the latent dimension
-                                        If 'mean': compute the mean of the last attention block over the embedding
-                                        dimension and projects it to the latent dimension
-            n_heads (int, optional): The number of heads in the attention mechanism. Defaults to 1.
-            id_per_sess (Optional[np.array]): Ids of the sessions to use the correct Hebbian attention layer during
-                                    the forward pass. None will set an incremental id to each session, defaults to None.
-            neurons_per_sess (Optional[Union[Any, List[Any]]]): Neuron indices each session is going to pay attention to
-                                                None will make the block pay attention to all neurons, defaults to None.
-            w_pre (float, optional): initial value for the weights of the presynaptic neurons, defaults to 1.0.
-            w_post (float, optional): initial value for the weights of the postsynaptic neurons, defaults to 0.5.
-            data_type (str, optional): 'ephys' or 'ca'.
-            sliding (bool, optional): whether to use the sliding window algorithm, default is False
-            window_size (int, optional): window size for the sliding window, default is 10
-            block_size (int, optional): block size for the sliding window, default is 3
-            device (torch.device, optional): The device to use for computation. Defaults to CPU.
-
-        Returns:
-            None
-        """
-
-        super(HebbianTransformerEncoder, self).__init__()
+        super(HebbianTransformer, self).__init__()
 
         if not hasattr(n_neurons_per_sess, '__iter__'):
             n_neurons_per_sess = [n_neurons_per_sess]

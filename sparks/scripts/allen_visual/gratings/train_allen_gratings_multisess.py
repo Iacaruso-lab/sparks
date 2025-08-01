@@ -50,7 +50,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    make_res_folder('allen_gratings_multisess_' + args.target_type, os.getcwd(), args)
+    make_res_folder('allen_gratings_multisess_sess_%d' % int(args.n_skip_sessions) + args.target_type, os.getcwd(), args)
 
     neuron_types = ['VISp', 'VISal', 'VISrl', 'VISpm', 'VISam', 'VISl']
     (train_datasets, train_dls, 
@@ -125,7 +125,7 @@ if __name__ == "__main__":
             all_decoder_outputs = []
             mean_test_loss = 0
 
-            for test_dl in test_dls:
+            for i, test_dl in enumerate(test_dls):
                 test_iterator = iter(test_dl)
                 encoder_outputs = torch.Tensor()
                 decoder_outputs = torch.Tensor()
@@ -146,7 +146,8 @@ if __name__ == "__main__":
                                                                                             test_loss=test_loss,
                                                                                             loss_fn=loss_fn,
                                                                                             device=args.device,
-                                                                                            act=torch.sigmoid)
+                                                                                            act=torch.sigmoid,
+                                                                                            sess_id=i)
 
                     encoder_outputs = torch.cat((encoder_outputs, encoder_outputs_batch), dim=0)
                     decoder_outputs = torch.cat((decoder_outputs, decoder_outputs_batch), dim=0)
@@ -164,13 +165,7 @@ if __name__ == "__main__":
                 torch.save(decoding_network.state_dict(), args.results_path + '/decoding_network.pt')
 
                 for i in range(len(test_dls)):
-                    np.save(args.results_path + '/test_enc_outputs_best_%s.npy' % neuron_types[i],
+                    np.save(args.results_path + '/test_enc_outputs_best_sess_%d.npy' % i,
                             all_decoder_outputs[i])
-                    np.save(args.results_path + '/test_dec_outputs_best_%s.npy' % neuron_types[i], 
-                            all_decoder_outputs[i])
-            else:
-                for i in range(len(test_dls)):
-                    np.save(args.results_path + '/test_enc_outputs_last_%s.npy' % neuron_types[i],
-                            all_encoder_outputs[i])
-                    np.save(args.results_path + '/test_dec_outputs_last_%s.npy' % neuron_types[i],
+                    np.save(args.results_path + '/test_dec_outputs_best_sess_%d.npy' % i, 
                             all_decoder_outputs[i])

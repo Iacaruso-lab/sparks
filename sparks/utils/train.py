@@ -53,14 +53,15 @@ def update_and_reset(encoder: torch.nn.Module,
                      optimizer: torch.optim.Optimizer,
                      max_val: float = 0.5):
     """
-    Updates the model's weights using the computed loss and the optimizer, and then resets the gradients.
-    This function is typically called after every batch during training.
+    Computes clipped gradients, updates the model's weights using the computed loss and the optimizer, 
+    and then resets the gradients. This function is typically called after every batch during training.
 
     Args:
         encoder (torch.nn.Module): The encoder module of the model.
         decoder (torch.nn.Module): The decoder module of the model.
         loss (torch.Tensor): The computed loss for the current batch of data.
         optimizer (torch.optim.Optimizer): The optimizer algorithm used to update the model's parameters.
+        max_val (float, optional): The maximum value for gradient clipping. Default is 0.5.
 
     Returns:
         None. The model parameters and gradients are updated inline.
@@ -105,6 +106,10 @@ def train_on_batch(encoder: torch.nn.Module,
                                 Default is 0.
         device (torch.device, optional): The device where the tensors will be allocated. Default is 'cpu'.
         **kwargs: Additional keyword arguments.
+        Optional arguments include:
+            - online (bool): If True, updates the model parameters at every time-step. Default is False.
+            - sess_id (int): Session identifier when training with multiple sessions. Default is 0.
+            - burnin (int): The number of initial steps to exclude from training. Default is 0.
 
     Returns:
         None. The model parameters are updated inline.
@@ -166,7 +171,7 @@ def train(encoder: torch.nn.Module,
     Args:
         encoder (torch.nn.Module): The encoder module of the model.
         decoder (torch.nn.Module): The decoder module of the model.
-        train_dls (List): List of Dataloaders to train on.
+        train_dls (List): List of Dataloaders to train on, typically one per session.
         loss_fn (Any): The loss function used to evaluate the model's predictions.
         optimizer (torch.optim.Optimizer): The optimizer algorithm used to update the model's parameters.
         latent_dim (int): The dimensionality of the latent space.
@@ -176,6 +181,9 @@ def train(encoder: torch.nn.Module,
                                 Default is 0.
         device (torch.device, optional): The device where the tensors will be allocated. Default is 'cpu'.
         **kwargs: Additional keyword arguments.
+
+        Optional arguments include:
+            - sess_id (np.ndarray): Array of session identifiers when training with multiple sessions. Default: np.arange(len(train_dls)).
 
     Returns:
         None. The model parameters are updated inline.
