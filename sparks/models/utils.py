@@ -7,11 +7,11 @@ class FeedForward(torch.nn.Module):
     def __init__(self, dim):
         super().__init__()
         self.net = torch.nn.Sequential(
-            torch.nn.LayerNorm(dim),
-            torch.nn.Linear(dim, dim),
-            torch.nn.GELU(),
-            torch.nn.Linear(dim, dim),
-            torch.nn.GELU()
+            torch.nn.RMSNorm(dim),
+            torch.nn.Linear(dim, 2 * dim, bias=False),
+            torch.nn.GLU(),
+            torch.nn.Linear(dim, 2 * dim, bias=False),
+            torch.nn.GLU()
         )
 
     def forward(self, x):
@@ -33,13 +33,13 @@ class MultiheadAttention(torch.nn.Module):
     From https://uvadlc-notebooks.readthedocs.io/en/latest/tutorial_notebooks/tutorial6/Transformers_and_MHAttention.html
     """
 
-    def __init__(self, embed_dim, num_heads):
+    def __init__(self, embed_dim, n_heads):
         super().__init__()
-        assert embed_dim % num_heads == 0, "Embedding dimension must be 0 modulo number of heads."
+        assert embed_dim % n_heads == 0, "Embedding dimension must be 0 modulo number of heads."
 
         self.embed_dim = embed_dim
-        self.num_heads = num_heads
-        self.head_dim = embed_dim // num_heads
+        self.n_heads = n_heads
+        self.head_dim = embed_dim // n_heads
 
         self.qkv_proj = torch.nn.Linear(embed_dim, 3 * embed_dim)
         self.o_proj = torch.nn.Linear(embed_dim, embed_dim)
@@ -57,7 +57,7 @@ class MultiheadAttention(torch.nn.Module):
         qkv = self.qkv_proj(x)
 
         # Separate Q, K, V from linear output
-        qkv = qkv.reshape(batch_size, seq_length, self.num_heads, 3 * self.head_dim)
+        qkv = qkv.reshape(batch_size, seq_length, self.n_heads, 3 * self.head_dim)
         qkv = qkv.permute(0, 2, 1, 3)  # [Batch, Head, SeqLen, Dims]
         q, k, v = qkv.chunk(3, dim=-1)
 

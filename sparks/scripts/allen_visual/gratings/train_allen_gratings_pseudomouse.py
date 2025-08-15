@@ -6,8 +6,8 @@ import torch
 import tqdm
 
 from sparks.data.allen.gratings_pseudomouse import make_gratings_dataset
-from sparks.models.decoders import get_decoder
-from sparks.models.encoders import HebbianTransformerEncoder
+from sparks.models.sparks import SPARKS
+from sparks.models.dataclasses import HebbianAttentionConfig, AttentionConfig
 from sparks.utils.misc import make_res_folder, save_results
 from sparks.utils.test import test_on_batch
 from sparks.utils.train import train_on_batch
@@ -65,14 +65,6 @@ if __name__ == "__main__":
                                                     seed=args.seed)
     np.save(args.results_path + '/good_units_ids.npy', train_dataset.good_units_ids)
 
-    encoding_network = HebbianTransformerEncoder(n_neurons_per_sess=len(train_dataset.good_units_ids),
-                                                 embed_dim=args.embed_dim,
-                                                 latent_dim=args.latent_dim,
-                                                 tau_s_per_sess=args.tau_s,
-                                                 dt_per_sess=args.dt,
-                                                 n_layers=args.n_layers,
-                                                 n_heads=args.n_heads).to(args.device)
-
     if args.target_type == 'freq':
         output_size = 2
         loss_fn = torch.nn.BCEWithLogitsLoss()
@@ -85,12 +77,21 @@ if __name__ == "__main__":
     else:
         raise NotImplementedError
 
-    decoding_network = get_decoder(output_dim_per_session=output_size * args.tau_f, args=args)
+    hebbian_config = HebbianAttentionConfig(tau_s=args.tau_s, dt=args.dt, n_heads=args.n_heads)
+    attention_config = AttentionConfig(n_layers=args.n_layers, n_heads=args.n_heads)
+    sparks = SPARKS(n_neurons_per_sess=len(train_dataset.good_units_ids),
+                    embed_dim=args.embed_dim,
+                    latent_dim=args.latent_dim,
+                    tau_p=args.tau_p,
+                    tau_f=args.tau_f,
+                    hebbian_config=hebbian_config,
+                    attention_config=attention_config,
+                    output_dim_per_session=output_size,
+                    device=args.device)
 
     if args.online:
         args.lr = args.lr / (0.25 * args.dt)
-    optimizer = torch.optim.Adam(list(encoding_network.parameters())
-                                 + list(decoding_network.parameters()), lr=args.lr)
+    optimizer = torch.optim.Adam(sparks.parameters(), lr=args.lr)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=250, gamma=0.9)
 
     loss_best = -np.inf
@@ -102,15 +103,11 @@ if __name__ == "__main__":
                 targets = inputs
             else:
                 targets = targets.unsqueeze(2).repeat_interleave(inputs.shape[-1], dim=-1)
-            train_on_batch(encoder=encoding_network,
-                           decoder=decoding_network,
+            train_on_batch(sparks,
                            inputs=inputs,
                            targets=targets,
                            loss_fn=loss_fn,
                            optimizer=optimizer,
-                           latent_dim=args.latent_dim,
-                           tau_p=args.tau_p,
-                           tau_f=args.tau_f,
                            device=args.device,
                            online=args.online,
                            beta=args.beta)
@@ -126,13 +123,9 @@ if __name__ == "__main__":
                     targets = inputs
                 else:
                     targets = targets.unsqueeze(2).repeat_interleave(inputs.shape[-1], dim=-1)
-                test_loss, encoder_outputs_batch, decoder_outputs_batch = test_on_batch(encoder=encoding_network,
-                                                                                        decoder=decoding_network,
+                test_loss, encoder_outputs_batch, decoder_outputs_batch = test_on_batch(sparks,
                                                                                         inputs=inputs,
                                                                                         targets=targets,
-                                                                                        latent_dim=args.latent_dim,
-                                                                                        tau_p=args.tau_p,
-                                                                                        tau_f=args.tau_f,
                                                                                         test_loss=test_loss,
                                                                                         loss_fn=loss_fn,
                                                                                         device=args.device,
@@ -143,4 +136,4 @@ if __name__ == "__main__":
 
             print('Avg test loss: ', test_loss)
             loss_best = save_results(args.results_path, -test_loss.cpu(), loss_best, encoder_outputs,
-                                     decoder_outputs, encoding_network, decoding_network)
+                                     decoder_outputs, sparks)

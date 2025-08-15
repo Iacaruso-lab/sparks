@@ -9,6 +9,7 @@ import random
 import numpy as np
 import torch
 
+from sparks.models.sparks import SPARKS
 
 def make_res_folder(name: str, path_to_res: str, args: argparse.Namespace):
     """
@@ -68,8 +69,7 @@ def save_results(results_path: str,
                  best_test_acc: float,
                  encoder_outputs: torch.Tensor,
                  decoder_outputs: torch.Tensor,
-                 encoder: torch.nn.Module,
-                 decoder: torch.nn.Module):
+                 sparks: SPARKS):
     """
     Saves test results, and the current encoder and decoder states if the test_acc is greater than the best seen so far.
 
@@ -81,10 +81,7 @@ def save_results(results_path: str,
         results_path (str): The path where to save the results.
         test_acc (float): The achieved test accuracy.
         best_test_acc (float): The best test accuracy seen so far.
-        encoder_outputs (torch.Tensor): The tensor of encoder outputs.
-        decoder_outputs (torch.Tensor): The tensor of decoder outputs.
-        encoder (torch.nn.Module): The encoder model of the VAE.
-        decoder (torch.nn.Module): The decoder model of the VAE.
+        sparks (SPARKS): The SPARKS instance.
 
     Returns:
         best_test_acc (float): The updated best test accuracy.
@@ -94,8 +91,7 @@ def save_results(results_path: str,
         best_test_acc = test_acc
         np.save(results_path + '/test_acc.npy', test_acc)
         np.save(results_path + '/test_enc_outputs_best.npy', encoder_outputs.cpu().numpy())
-        torch.save(encoder.state_dict(), results_path + '/encoding_network.pt')
-        torch.save(decoder.state_dict(), results_path + '/decoding_network.pt')
+        torch.save(sparks.state_dict(), results_path + '/encoding_network.pt')
         np.save(results_path + '/test_dec_outputs_best.npy', decoder_outputs.cpu().numpy())
     else:
         np.save(results_path + '/test_dec_outputs_last.npy', decoder_outputs.cpu().numpy())

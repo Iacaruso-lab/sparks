@@ -1,5 +1,6 @@
 from scipy.special import gammaln
 import numpy as np
+import torch
 
 
 def neg_log_likelihood(rates, spikes, zero_warning=True):
@@ -63,3 +64,26 @@ def bits_per_spike(rates, spikes):
     nll_null = neg_log_likelihood(np.tile(np.nanmean(spikes, axis=(0,1), keepdims=True), 
                                           (spikes.shape[0], spikes.shape[1], 1)), spikes, zero_warning=False)
     return (nll_null - nll_model) / np.nansum(spikes) / np.log(2)
+
+
+def kl_loss(preds, targets, loss_fn, mu, logvar, beta=1.0):
+    """Computes the KL divergence loss for a VAE.
+    
+    Parameters
+    ----------
+    loss_fn : callable
+        The loss function to compute the negative log likelihood.
+    mu : torch.Tensor
+        The mean of the latent distribution.
+    logvar : torch.Tensor
+        The log-variance of the latent distribution.
+    beta : float, optional
+        The weight for the KL divergence term. Default is 1.0.
+    
+    Returns
+    -------
+    torch.Tensor
+        The computed KL divergence loss.
+    """
+
+    return loss_fn(preds, targets) - beta * 0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())

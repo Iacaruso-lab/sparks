@@ -73,14 +73,11 @@ def make_monkey_reaching_dataset(dataset_path: os.path,
     align_data_train, align_data_test, lag_align_data_train, lag_align_data_test = process_dataset(dataset_path,
                                                                                                    mode=mode,
                                                                                                    y_keys=y_keys)
-    normalize_targets = False if ((y_keys == 'direction') or (mode in ['unsupervised', 'spikes_pred'])) else True
 
-    train_dataset = MonkeyReachingDataset(align_data_train, lag_align_data_train, y_keys, mode=mode, smooth=smooth, 
-                                          normalize_targets=normalize_targets)
+    train_dataset = MonkeyReachingDataset(align_data_train, lag_align_data_train, y_keys, mode=mode, smooth=smooth)
     train_dl = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
-    test_dataset = MonkeyReachingDataset(align_data_test, lag_align_data_test, y_keys, mode=mode, smooth=smooth,
-                                         normalize_targets=normalize_targets)
+    test_dataset = MonkeyReachingDataset(align_data_test, lag_align_data_test, y_keys, mode=mode, smooth=smooth)
     test_dl = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
     return train_dataset, test_dataset, train_dl, test_dl
@@ -91,8 +88,7 @@ class MonkeyReachingDataset(torch.utils.data.Dataset):
                  lag_align_data: List,
                  y_keys: str,
                  mode: str = 'prediction',
-                 smooth: bool = False,
-                 normalize_targets: bool = True) -> None:
+                 smooth: bool = False) -> None:
 
         """
         Abstract Dataset for spike encoding
@@ -100,8 +96,16 @@ class MonkeyReachingDataset(torch.utils.data.Dataset):
         Parameters
         --------------------------------------
 
-        :param: device : torch.device = 'cpu'
-        device to which data is loaded
+        :param: align_data : List
+        list of aligned data for each angle, each element is a DataFrame with 'spikes' and target keys
+        :param: lag_align_data : List
+        list of lagged aligned data for each angle, each element is a DataFrame with 'spikes' and target keys
+        :param: y_keys : str
+        target key to use, e.g. 'hand_pos', 'hand_vel', 'force', 'muscle_len', 'direction', 'joint_ang'
+        :param: mode : str
+        mode of the dataset, e.g. 'prediction', 'unsupervised', 'spikes_pred'
+        :param: smooth : bool
+        whether to smooth spikes into FRs
         """
 
         super(MonkeyReachingDataset).__init__()

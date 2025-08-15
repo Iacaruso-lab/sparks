@@ -3,10 +3,11 @@ import os
 
 import numpy as np
 import torch
+import tqdm
 
 from sparks.data.mec.mec_ca import make_mec_ca_dataset
-from sparks.models.decoders import get_decoder
-from sparks.models.encoders import HebbianTransformerEncoder
+from sparks.models.sparks import SPARKS
+from sparks.models.dataclasses import HebbianAttentionConfig, AttentionConfig
 from sparks.utils.misc import make_res_folder, save_results
 from sparks.utils.test import test
 from sparks.utils.train import train
@@ -35,7 +36,6 @@ if __name__ == "__main__":
     parser.add_argument('--tau_p', type=int, default=50, help='Past window size')
     parser.add_argument('--tau_f', type=int, default=1, help='Future window size')
     parser.add_argument('--tau_s', type=float, default=1., help='STDP decay')
-    parser.add_argument('--alpha', type=float, default=0.2, help='')
 
     # Data parameters
     parser.add_argument('--ds', type=int, default=4, help='downsampling factor')
@@ -46,7 +46,7 @@ if __name__ == "__main__":
 
     # Create folder to save results
     args.dt = args.ds / 7.73
-    make_res_folder('mec_' + args.mode + '_alpha_' + str(args.alpha) + '_ca', os.getcwd(), args)
+    make_res_folder('mec_' + args.mode, os.getcwd(), args)
 
     data_path = os.path.join(args.home, 'datasets/mec/calcium_activity_matrix_60584_session17.mat')
     if args.mode == 'prediction':
@@ -73,47 +73,41 @@ if __name__ == "__main__":
                                                 num_workers=args.num_workers)
 
     input_size = len(train_dataset.spikes)
-    encoding_network = HebbianTransformerEncoder(n_neurons_per_sess=input_size,
-                                                 embed_dim=args.embed_dim,
-                                                 latent_dim=args.latent_dim,
-                                                 tau_s_per_sess=args.tau_s,
-                                                 dt_per_sess=args.dt,
-                                                 n_layers=args.n_layers,
-                                                 n_heads=args.n_heads,
-                                                 alpha=args.alpha).to(args.device)
 
-    decoding_network = get_decoder(output_dim_per_session=input_size * args.tau_f, args=args)
+    hebbian_config = HebbianAttentionConfig(tau_s=args.tau_s, dt=args.dt, n_heads=args.n_heads)
+    attention_config = AttentionConfig(n_layers=args.n_layers, n_heads=args.n_heads)
+    sparks = SPARKS(n_neurons_per_sess=input_size,
+                    embed_dim=args.embed_dim,
+                    latent_dim=args.latent_dim,
+                    tau_p=args.tau_p,
+                    tau_f=args.tau_f,
+                    hebbian_config=hebbian_config,
+                    attention_config=attention_config,
+                    output_dim_per_session=input_size,
+                    device=args.device)
 
-    optimizer = torch.optim.Adam(list(encoding_network.parameters())
-                                 + list(decoding_network.parameters()), lr=args.lr)
+    optimizer = torch.optim.Adam(sparks, lr=args.lr)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.8)
     loss_fn = torch.nn.BCEWithLogitsLoss()
 
     best_test_acc = -np.inf
 
-    for epoch in range(args.n_epochs):
-        train(encoder=encoding_network,
-              decoder=decoding_network,
+    pbar = tqdm.tqdm(range(args.n_epochs))
+    for epoch in pbar:
+        train(sparks=sparks,
               train_dls=[train_dl],
               loss_fn=loss_fn,
               optimizer=optimizer,
-              latent_dim=args.latent_dim,
-              tau_p=args.tau_p,
-              tau_f=args.tau_f,
               beta=args.beta,
               device=args.device)
         scheduler.step()
 
         if (epoch + 1) % args.test_period == 0:
-            test_loss, encoder_outputs, decoder_outputs = test(encoder=encoding_network,
-                                                               decoder=decoding_network,
+            test_loss, encoder_outputs, decoder_outputs = test(sparks=sparks,
                                                                test_dls=[test_dl],
-                                                               latent_dim=args.latent_dim,
-                                                               tau_p=args.tau_p,
-                                                               tau_f=args.tau_f,
                                                                loss_fn=loss_fn,
-                                                               device=args.device)
+                                                               act=torch.sigmoid)
 
-            print("Epoch %d, test loss: %.3f" % (epoch, test_loss.cpu().numpy()))
+            pbar.set_description(f"Epoch {epoch + 1}/{args.n_epochs}, Test Loss: {test_loss:.4f}")
             best_test_acc = save_results(args.results_path, -test_loss, best_test_acc, encoder_outputs,
-                                         decoder_outputs, encoding_network, decoding_network)
+                                         decoder_outputs, sparks)
