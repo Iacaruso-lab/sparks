@@ -3,9 +3,8 @@ from typing import Any, List
 import numpy as np
 import torch
 
-from sparks.utils.misc import LongCycler
-from sparks.utils.test import test_init, test_on_batch
-from sparks.utils.vae import ae_forward
+from sparks.data.misc import LongCycler
+from sparks.utils.test import test_on_batch
 from sparks.data.base import StandardTargetProvider, AllenMoviesTargetProvider
 from sparks.models.sparks import SPARKS
 

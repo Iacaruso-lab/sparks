@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from torch.nn import NLLLoss
 
-from sparks.utils.misc import LongCycler
+from sparks.data.misc import LongCycler
 from sparks.utils.losses import kl_loss
 from sparks.models.sparks import SPARKS
 from sparks.data.base import StandardTargetProvider, TargetProvider

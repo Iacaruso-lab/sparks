@@ -216,7 +216,6 @@ class AllenGratingsPseudoMouseDataset(BaseDataset):
         """
         Get all spikes for a given presentation of the movie
         """
-
         time_bin_edges = np.arange(0, 0.25 + self.dt, self.dt)
         return make_spike_histogram(idx, self.good_units_ids, self.spikes, time_bin_edges)
 

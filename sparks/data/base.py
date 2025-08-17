@@ -29,7 +29,7 @@ class BaseDataset(torch.utils.data.Dataset):
         :return: tuple: (data, idx)
         """
 
-        return self.get_spikes(index), torch.Tensor(index)
+        return self.get_spikes(index), self.get_target(index)
 
 
 class TargetProvider(ABC):
@@ -49,7 +49,7 @@ class StandardTargetProvider(TargetProvider):
     """Standard target provider that loads targets from pre-computed tensors."""
 
     def __init__(self, targets: torch.tensor):
-        super(StandardTargetProvider).__init__(targets)
+        super().__init__(targets=targets)
 
     def get_target(self, batch_idxs: Union[List, np.ndarray], timestep: int, 
                    tau_f: int, device: Union[str, torch.device] = 'cpu') -> torch.Tensor:
@@ -63,7 +63,7 @@ class AllenMoviesTargetProvider(TargetProvider):
     def __init__(self, 
                  frames: torch.tensor, 
                  dt: float):
-        super(AllenMoviesTargetProvider).__init__(frames)
+        super().__init__(targets=frames)
 
         self.time_bin_edges = np.concatenate((np.arange(0, 30., dt), np.array([30.])))
         self.frames_bin_edges = np.concatenate((np.arange(1/30, 30, 1/30), np.array([30.])))
@@ -86,7 +86,7 @@ class DenoisingTargetProvider(TargetProvider):
     """Standard target provider that loads targets from pre-computed tensors."""
 
     def __init__(self, targets: torch.tensor):
-        super(DenoisingTargetProvider).__init__(targets)
+        super().__init__(targets=targets)
 
     def get_target(self, batch_idxs: Union[List, np.ndarray], timestep: int, 
                    tau_f: int, device: Union[str, torch.device] = 'cpu') -> torch.Tensor:

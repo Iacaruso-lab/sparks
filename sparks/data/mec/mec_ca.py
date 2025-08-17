@@ -131,3 +131,6 @@ class MECDataset(BaseDataset):
                                 int(self.start_stop_times[index][1] * self.fs)].astype(np.float32)
 
         return torch.tensor(spikes[:, :self.min_length])
+
+    def get_target(self, index: int):
+        return torch.Tensor(index).unsqueeze(0)

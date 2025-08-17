@@ -147,10 +147,11 @@ class MonkeyReachingDataset(BaseDataset):
         if self.smooth:
             features = np.vstack([smooth(feature, window=200) for feature in features])
 
+        # print(features.shape)
         return torch.tensor(features).float()
 
     def get_target(self, index: int):
         if self.mode == 'unsupervised':
-            return torch.Tensor(index)
+            return torch.Tensor(index).unsqueeze(0)
         else:
             return torch.tensor(self.y_trial_data[index]).float()

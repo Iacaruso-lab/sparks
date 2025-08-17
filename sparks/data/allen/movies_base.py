@@ -5,9 +5,10 @@ import torch
 
 from sparks.data.allen.utils import make_spike_histogram
 from sparks.data.misc import normalize
+from sparks.data.base import BaseDataset
 
 
-class AllenMoviesDataset(torch.utils.data.Dataset):
+class AllenMoviesDataset(BaseDataset):
     def __init__(self,
                  dt: float = 0.01,
                  cache: object = None,
@@ -50,16 +51,7 @@ class AllenMoviesDataset(torch.utils.data.Dataset):
         if np.isin(self.mode, ['prediction', 'reconstruction']):
             return self.targets
         else:
-            return self.get_spikes(index)
-
-    def __getitem__(self, index: int) -> Any:
-        """
-        :param: index: int
-         Index
-        :return: spikes histogram for the given index
-        """
-        return self.get_spikes(index), self.get_target(index)
-
+            return torch.Tensor(index).unsqueeze(0)
 
 class AllenMoviesNpxDataset(AllenMoviesDataset):
     def __init__(self,
@@ -94,14 +86,6 @@ class AllenMoviesNpxDataset(AllenMoviesDataset):
         Get all spikes for a given presentation of the movie
         """
         return make_spike_histogram(idx, self.good_units_ids, self.spikes, self.time_bin_edges)
-
-    def __getitem__(self, index: int) -> Any:
-        """
-        :param: index: int
-         Index
-        :return: spikes histogram for the given index
-        """
-        return self.get_spikes(index), self.get_target(index)
 
 
 class AllenMoviesCaDataset(AllenMoviesDataset):

@@ -3,7 +3,7 @@ from typing import Any, List
 import numpy as np
 import torch
 
-from sparks.utils.misc import LongCycler
+from sparks.data.misc import LongCycler
 from sparks.utils.train import train_on_batch
 from sparks.data.base import StandardTargetProvider, AllenMoviesTargetProvider, DenoisingTargetProvider
 from sparks.models.sparks import SPARKS
