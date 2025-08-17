@@ -5,13 +5,12 @@ import numpy as np
 import torch
 import tqdm
 
-from sparks.data.allen.gratings_pseudomouse_singlesess import make_gratings_dataset
-from sparks.models.decoders import get_decoder
-from sparks.models.encoders import HebbianTransformerEncoder
+from sparks.data.allen.gratings_multisess import make_gratings_dataset
+from sparks.models.sparks import SPARKS
+from sparks.models.dataclasses import HebbianAttentionConfig, AttentionConfig
 from sparks.utils.misc import make_res_folder, save_results
-from sparks.utils.test import test_on_batch
-from sparks.utils.train import train_on_batch
-from sparks.utils.misc import LongCycler
+from sparks.utils.test import test
+from sparks.utils.train import train
 
 if __name__ == "__main__":
     # setting the hyper parameters
@@ -66,106 +65,59 @@ if __name__ == "__main__":
                                                       seed=args.seed)
 
     input_sizes = [len(train_dataset.good_units_ids) for train_dataset in train_datasets]
-    encoding_network = HebbianTransformerEncoder(n_neurons_per_sess=input_sizes,
-                                                 embed_dim=args.embed_dim,
-                                                 latent_dim=args.latent_dim,
-                                                 tau_s_per_sess=args.tau_s,
-                                                 dt_per_sess=args.dt,
-                                                 n_layers=args.n_layers,
-                                                 n_heads=args.n_heads).to(args.device)
-    print(f"Input sizes per session: {input_sizes}")
     if args.target_type == 'freq':
         output_size = 2
         loss_fn = torch.nn.BCEWithLogitsLoss()
     elif args.target_type == 'class':
         output_size = 5
-        loss_fn = torch.nn.NLLLoss()
+        loss_fn = torch.nn.CrossEntropyLoss()
     elif args.target_type == 'unsupervised':
-        output_size = [input_size * args.tau_f for input_size in input_sizes]
+        output_sizes = input_sizes
         loss_fn = torch.nn.BCEWithLogitsLoss()
     else:
         raise NotImplementedError
 
-    decoding_network = get_decoder(output_dim_per_session=output_size * args.tau_f, args=args)
+    hebbian_config = HebbianAttentionConfig(tau_s=args.tau_s, dt=args.dt, n_heads=args.n_heads)
+    attention_config = AttentionConfig(n_layers=args.n_layers, n_heads=args.n_heads)
+    sparks = SPARKS(n_neurons_per_sess=input_sizes,
+                    embed_dim=args.embed_dim,
+                    latent_dim=args.latent_dim,
+                    tau_p=args.tau_p,
+                    tau_f=args.tau_f,
+                    hebbian_config=hebbian_config,
+                    attention_config=attention_config,
+                    output_dim_per_session=output_sizes,
+                    device=args.device)
 
     if args.online:
         args.lr = args.lr / (0.25 * args.dt)
-    optimizer = torch.optim.Adam(list(encoding_network.parameters())
-                                 + list(decoding_network.parameters()), lr=args.lr)
+    optimizer = torch.optim.Adam(sparks.parameters(), lr=args.lr)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=250, gamma=0.9)
 
-    loss_best = np.inf
+    loss_best = -np.inf
 
-    for epoch in tqdm.tqdm(range(args.n_epochs)):
-        random_order = np.random.choice(np.arange(len(train_dls)), size=len(train_dls), replace=False)
-        train_iterator = LongCycler([train_dls[i] for i in random_order])
-
-        for i, (inputs, targets) in enumerate(train_iterator):
-            if args.target_type == 'unsupervised':
-                targets = inputs
-            else:
-                targets = targets.unsqueeze(2).repeat_interleave(inputs.shape[-1], dim=-1)
-
-            train_on_batch(encoder=encoding_network,
-                           decoder=decoding_network,
-                           inputs=inputs,
-                           targets=targets,
-                           loss_fn=loss_fn,
-                           optimizer=optimizer,
-                           latent_dim=args.latent_dim,
-                           tau_p=args.tau_p,
-                           tau_f=args.tau_f,
-                           device=args.device,
-                           online=args.online,
-                           sess_id=random_order[i % len(train_dls)],
-                           beta=args.beta)
+    pbar = tqdm.tqdm(range(args.n_epochs))
+    for epoch in pbar:
+        train(sparks=sparks,
+              train_dls=train_dls,
+              loss_fn=loss_fn,
+              optimizer=optimizer,
+              beta=args.beta,
+              device=args.device,
+              mode=args.mode,
+              frames=train_datasets[0].true_frames,
+              online=args.online,
+              dt=args.dt)
+        scheduler.step()
 
         if (epoch + 1) % args.test_period == 0:
-            all_encoder_outputs = []
-            all_decoder_outputs = []
-            mean_test_loss = 0
+            test_acc, encoder_outputs, decoder_outputs = test(sparks=sparks,
+                                                               test_dls=test_dls,
+                                                               loss_fn=loss_fn,
+                                                               mode=args.mode,
+                                                               frames=test_datasets[0].true_frames,
+                                                               dt=args.dt,
+                                                               act=torch.sigmoid)
 
-            for i, test_dl in enumerate(test_dls):
-                test_iterator = iter(test_dl)
-                encoder_outputs = torch.Tensor()
-                decoder_outputs = torch.Tensor()
-                test_loss = 0
-
-                for inputs, targets in test_iterator:
-                    if args.target_type == 'unsupervised':
-                        targets = inputs
-                    else:
-                        targets = targets.unsqueeze(2).repeat_interleave(inputs.shape[-1], dim=-1)
-                    test_loss, encoder_outputs_batch, decoder_outputs_batch = test_on_batch(encoder=encoding_network,
-                                                                                            decoder=decoding_network,
-                                                                                            inputs=inputs,
-                                                                                            targets=targets,
-                                                                                            latent_dim=args.latent_dim,
-                                                                                            tau_p=args.tau_p,
-                                                                                            tau_f=args.tau_f,
-                                                                                            test_loss=test_loss,
-                                                                                            loss_fn=loss_fn,
-                                                                                            device=args.device,
-                                                                                            act=torch.sigmoid,
-                                                                                            sess_id=i)
-
-                    encoder_outputs = torch.cat((encoder_outputs, encoder_outputs_batch), dim=0)
-                    decoder_outputs = torch.cat((decoder_outputs, decoder_outputs_batch), dim=0)
-
-                mean_test_loss += test_loss.item()
-                all_encoder_outputs.append(encoder_outputs.cpu().numpy())
-                all_decoder_outputs.append(decoder_outputs.cpu().numpy())
-
-            mean_test_loss /= len(test_dls)
-            print(f"Epoch {epoch + 1}/{args.n_epochs}, Test Loss: {mean_test_loss:.4f}")
-
-            if mean_test_loss <= loss_best:
-                loss_best = mean_test_loss
-                torch.save(encoding_network.state_dict(), args.results_path + '/encoding_network.pt')
-                torch.save(decoding_network.state_dict(), args.results_path + '/decoding_network.pt')
-
-                for i in range(len(test_dls)):
-                    np.save(args.results_path + '/test_enc_outputs_best_sess_%d.npy' % i,
-                            all_decoder_outputs[i])
-                    np.save(args.results_path + '/test_dec_outputs_best_sess_%d.npy' % i, 
-                            all_decoder_outputs[i])
+            best_test_acc = save_results(args.results_path, test_acc, best_test_acc,
+                                          encoder_outputs, decoder_outputs, sparks)

@@ -9,8 +9,8 @@ from sparks.data.allen.gratings_pseudomouse import make_gratings_dataset
 from sparks.models.sparks import SPARKS
 from sparks.models.dataclasses import HebbianAttentionConfig, AttentionConfig
 from sparks.utils.misc import make_res_folder, save_results
-from sparks.utils.test import test_on_batch
-from sparks.utils.train import train_on_batch
+from sparks.utils.test import test
+from sparks.utils.train import train
 
 if __name__ == "__main__":
     # setting the hyper parameters
@@ -42,7 +42,7 @@ if __name__ == "__main__":
     parser.add_argument('--n_neurons', type=int, default=100)
     parser.add_argument('--neuron_type', type=str, default='VISp')
 
-    parser.add_argument('--target_type', type=str, default='freq', choices=['freq', 'class', 'unsupervised'],
+    parser.add_argument('--mode', type=str, default='freq', choices=['freq', 'class', 'unsupervised'],
                         help='Type of target to predict: either spatial frequencies or class index')
     parser.add_argument('--p_train', type=float, default=0.8, help='Number of training example')
     parser.add_argument('--dt', type=float, default=0.001, help='time bins period')
@@ -70,7 +70,7 @@ if __name__ == "__main__":
         loss_fn = torch.nn.BCEWithLogitsLoss()
     elif args.target_type == 'class':
         output_size = 5
-        loss_fn = torch.nn.NLLLoss()
+        loss_fn = torch.nn.CrossEntropyLoss()
     elif args.target_type == 'unsupervised':
         output_size = args.n_neurons
         loss_fn = torch.nn.BCEWithLogitsLoss()
@@ -97,42 +97,20 @@ if __name__ == "__main__":
     loss_best = -np.inf
 
     for epoch in tqdm.tqdm(range(args.n_epochs)):
-        train_iterator = iter(train_dl)
-        for inputs, targets in train_iterator:
-            if args.target_type == 'unsupervised':
-                targets = inputs
-            else:
-                targets = targets.unsqueeze(2).repeat_interleave(inputs.shape[-1], dim=-1)
-            train_on_batch(sparks,
-                           inputs=inputs,
-                           targets=targets,
-                           loss_fn=loss_fn,
-                           optimizer=optimizer,
-                           device=args.device,
-                           online=args.online,
-                           beta=args.beta)
+        train(sparks=sparks,
+              train_dls=[train_dl],
+              loss_fn=loss_fn,
+              optimizer=optimizer,
+              beta=args.beta,
+              online=args.online,
+              device=args.device,
+              unsupervised=args.mode == 'unsupervised')
 
         if (epoch + 1) % args.test_period == 0:
-            test_iterator = iter(test_dl)
-            encoder_outputs = torch.Tensor()
-            decoder_outputs = torch.Tensor()
-            test_loss = 0
-
-            for inputs, targets in test_iterator:
-                if args.target_type == 'unsupervised':
-                    targets = inputs
-                else:
-                    targets = targets.unsqueeze(2).repeat_interleave(inputs.shape[-1], dim=-1)
-                test_loss, encoder_outputs_batch, decoder_outputs_batch = test_on_batch(sparks,
-                                                                                        inputs=inputs,
-                                                                                        targets=targets,
-                                                                                        test_loss=test_loss,
-                                                                                        loss_fn=loss_fn,
-                                                                                        device=args.device,
-                                                                                        act=torch.sigmoid)
-
-                encoder_outputs = torch.cat((encoder_outputs, encoder_outputs_batch), dim=0)
-                decoder_outputs = torch.cat((decoder_outputs, decoder_outputs_batch), dim=0)
+            test_loss, encoder_outputs, decoder_outputs = test(sparks=sparks,
+                                                               test_dls=[test_dl],
+                                                               loss_fn=loss_fn,
+                                                               act=torch.sigmoid)
 
             print('Avg test loss: ', test_loss)
             loss_best = save_results(args.results_path, -test_loss.cpu(), loss_best, encoder_outputs,

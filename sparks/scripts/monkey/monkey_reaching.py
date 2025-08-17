@@ -106,13 +106,17 @@ if __name__ == "__main__":
               loss_fn=loss_fn,
               optimizer=optimizer,
               beta=args.beta,
-              device=args.device)
+              device=args.device,
+              unsupervised=np.isin(args.mode, ['unsupervised', 'spikes_pred']))
         scheduler.step()
 
         if (epoch + 1) % args.test_period == 0:
             test_loss, encoder_outputs, decoder_outputs = test(sparks=sparks,
                                                                test_dls=[test_dl],
                                                                loss_fn=loss_fn,
+                                                               unsupervised=np.isin(args.mode, 
+                                                                                    ['unsupervised', 
+                                                                                     'spikes_pred']),
                                                                act=torch.sigmoid)
 
             test_acc = get_accuracy(decoder_outputs, test_dataset, test_loss, args.mode, args.target_type)

@@ -5,12 +5,13 @@ import torch
 
 from sparks.utils.misc import identity
 from sparks.models.sparks import SPARKS
+from sparks.data.base import StandardTargetProvider, TargetProvider
 
 
 @torch.no_grad()
 def test_on_batch(sparks: SPARKS,
                   inputs: torch.tensor,
-                  targets: torch.tensor = None,
+                  target_provider: TargetProvider = None,
                   loss_fn: Any = None,
                   test_loss: float = 0,
                   **kwargs):
@@ -45,6 +46,7 @@ def test_on_batch(sparks: SPARKS,
     sess_id = kwargs.get('sess_id', 0)
     burnin = kwargs.get('burnin', 0)
     act = kwargs.get('act', identity)
+    batch_idxs = kwargs.get('batch_idxs', np.arange(len(inputs)))
 
     sparks.eval()
     sparks.encoder.zero_()
@@ -63,9 +65,7 @@ def test_on_batch(sparks: SPARKS,
     
         if loss_fn is not None:
             if t < inputs.shape[-1] - sparks.tau_f + 1:
-                target = targets[..., t:t + sparks.tau_f].reshape(targets.shape[0], -1).to(sparks.device)
-                if isinstance(loss_fn, torch.nn.NLLLoss):
-                    target = target[:, 0].long()
+                target = target_provider.get_target(batch_idxs, t, sparks.tau_f, sparks.device)
                 test_loss += loss_fn(decoder_outputs, target).cpu() / (inputs.shape[-1] - sparks.tau_f + 1)
         else:
             test_loss = None
@@ -109,13 +109,18 @@ def test(sparks: SPARKS,
     test_loss = 0
 
     sess_ids = kwargs.get('sess_ids', np.arange(len(test_dls)))
+    unsupervised = kwargs.get('unsupervised', False)
 
     for i, test_dl in enumerate(test_dls):
         test_iterator = iter(test_dl)
         for inputs, targets in test_iterator:
+            if unsupervised:
+                target_provider = StandardTargetProvider(inputs)
+            else:
+                target_provider = StandardTargetProvider(targets)
             test_loss, encoder_outputs_batch, decoder_outputs_batch = test_on_batch(sparks=sparks,
                                                                                     inputs=inputs,
-                                                                                    targets=targets,
+                                                                                    target_provider=target_provider,
                                                                                     test_loss=test_loss,
                                                                                     loss_fn=loss_fn,
                                                                                     device=device,

@@ -6,6 +6,8 @@ from scipy.io import loadmat
 from scipy.signal import convolve, correlate, correlation_lags
 from scipy.stats import norm
 
+from sparks.data.base import BaseDataset
+
 
 def spikes_downsample(spikes, downsampling_factor, mode='mean'):
     bins = np.arange(0, spikes.shape[-1] + downsampling_factor, downsampling_factor)
@@ -89,7 +91,7 @@ def make_mec_ca_dataset(spikes_file,
     return dataset, dl
 
 
-class MECDataset(torch.utils.data.Dataset):
+class MECDataset(BaseDataset):
     def __init__(self,
                  spikes: np.ndarray,
                  start_stop_times: np.ndarray,
@@ -117,7 +119,8 @@ class MECDataset(torch.utils.data.Dataset):
         """ """
         return len(self.start_stop_times)
 
-    def __getitem__(self, index: int) -> Any:
+
+    def get_spikes(self, index: int) -> torch.tensor:
         """
         :param: index: int
          Index
@@ -127,4 +130,4 @@ class MECDataset(torch.utils.data.Dataset):
         spikes = self.spikes[:, int(self.start_stop_times[index][0] * self.fs):
                                 int(self.start_stop_times[index][1] * self.fs)].astype(np.float32)
 
-        return spikes[:, :self.min_length], spikes[:, :self.min_length]
+        return torch.tensor(spikes[:, :self.min_length])

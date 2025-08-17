@@ -3,12 +3,12 @@ import os
 
 import numpy as np
 import torch
+import tqdm
 
-from sparks.data.allen.movies_singlesess import make_allen_movies_dataset
+from sparks.data.allen.movies_multisess import make_allen_movies_dataset
 from sparks.scripts.allen_visual.movies.utils.test import test
 from sparks.scripts.allen_visual.movies.utils.train import train
-from sparks.models.decoders import get_decoder
-from sparks.models.encoders import HebbianTransformerEncoder
+from sparks.scripts.allen_visual.movies.utils.misc import make_network_and_optimizers
 from sparks.utils.misc import make_res_folder, save_results
 
 if __name__ == "__main__":
@@ -31,12 +31,9 @@ if __name__ == "__main__":
     parser.add_argument('--n_heads', type=int, default=1, help='Number of attention heads')
     parser.add_argument('--embed_dim', type=int, default=128, help='Size of attention embeddings')
     parser.add_argument('--n_layers', type=int, default=0, help='Number of conventional attention layers')
-    parser.add_argument('--dec_type', type=str, default='mlp', choices=['linear', 'mlp'],
-                        help='Type of decoder (one of linear or mlp)')
     parser.add_argument('--tau_p', type=int, default=6, help='Past window size')
     parser.add_argument('--tau_f', type=int, default=1, help='Future window size')
     parser.add_argument('--tau_s', type=float, default=1., help='STDP decay')
-    parser.add_argument('--alpha', type=float, default=1., help='')
 
     # Data parameters
     parser.add_argument('--n_skip_sessions', type=int, default=0, help='First session to consider')
@@ -44,7 +41,7 @@ if __name__ == "__main__":
     parser.add_argument('--block', type=str, default='first',
                         choices=['first', 'second', 'across', 'both'], help='From which blocks to use')
     parser.add_argument('--mode', type=str, default='prediction',
-                        choices=['prediction', 'reconstruction', 'unsupervised'],
+                        choices=['prediction', 'reconstruction', 'unsupervised', 'denoising'],
                         help='Which type of task to perform')
     parser.add_argument('--dt', type=float, default=0.006, help='Time sampling period')
     parser.add_argument('--ds', type=int, default=2, help='Frame downsampling factor')
@@ -66,68 +63,38 @@ if __name__ == "__main__":
                                                       mode=args.mode,
                                                       ds=args.ds)
 
-    # Create encoding/decoding networks
-    input_sizes = [len(train_dataset.good_units_ids) for train_dataset in train_datasets]
-    encoding_network = HebbianTransformerEncoder(n_neurons_per_sess=input_sizes,
-                                                 embed_dim=args.embed_dim,
-                                                 latent_dim=args.latent_dim,
-                                                 tau_s_per_sess=args.tau_s,
-                                                 dt_per_sess=args.dt,
-                                                 n_layers=args.n_layers,
-                                                 n_heads=args.n_heads,
-                                                 alpha=args.alpha).to(args.device)
-
-    if args.mode == 'prediction':
-        output_sizes = 900 * args.tau_f
-    elif args.mode == 'reconstruction':
-        output_sizes = [np.prod(train_dataset.targets.shape[:-1]) * args.tau_f for train_dataset in train_datasets]
-    elif args.mode == 'unsupervised':
-        output_sizes = [input_size * args.tau_f for input_size in input_sizes]
-    else:
-        raise NotImplementedError
-
-    decoding_network = get_decoder(output_dim_per_session=output_sizes, args=args,
-                                   softmax=True if args.mode == 'prediction' else False,
-                                   hid_features = [args.latent_dim * args.tau_p,
-                                                    args.latent_dim * args.tau_p,
-                                                    int(np.mean([args.latent_dim * args.tau_p,
-                                                                 np.mean(np.mean(output_sizes) * args.tau_f)]))])
-
-    if args.online:
-        args.lr = args.lr / 900
-    optimizer = torch.optim.Adam(list(encoding_network.parameters())
-                                 + list(decoding_network.parameters()), lr=args.lr)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.8)
-
-    if args.mode == 'prediction':
-        loss_fn = torch.nn.NLLLoss()
-    else:
-        loss_fn = torch.nn.BCEWithLogitsLoss()
+    sparks, optimizer, scheduler, loss_fn = make_network_and_optimizers(args, datasets=train_datasets)
 
     best_test_acc = -np.inf
 
-    for epoch in range(args.n_epochs):
-        train(encoder=encoding_network, decoder=decoding_network, train_dls=train_dls, loss_fn=loss_fn,
-              optimizer=optimizer, latent_dim=args.latent_dim, tau_p=args.tau_p, mode=args.mode,
-              tau_f=args.tau_f, device=args.device, dt=args.dt, online=args.online, beta=args.beta)
+    # Training loop
+    pbar = tqdm.tqdm(range(args.n_epochs))
+    for epoch in pbar:
+        train(sparks=sparks,
+              train_dls=train_dls,
+              loss_fn=loss_fn,
+              optimizer=optimizer,
+              beta=args.beta,
+              device=args.device,
+              mode=args.mode,
+              frames=train_datasets[0].true_frames,
+              online=args.online,
+              dt=args.dt)
         scheduler.step()
 
         if (epoch + 1) % args.test_period == 0:
-            test_acc, encoder_outputs, decoder_outputs = test(encoder=encoding_network,
-                                                              decoder=decoding_network,
-                                                              test_dls=test_dls,
-                                                              true_frames=test_datasets[0].true_frames,
-                                                              mode=args.mode,
-                                                              latent_dim=args.latent_dim,
-                                                              tau_p=args.tau_p,
-                                                              tau_f=args.tau_f,
-                                                              dt=args.dt,
-                                                              loss_fn=loss_fn,
-                                                              device=args.device)
+            test_acc, encoder_outputs, decoder_outputs = test(sparks=sparks,
+                                                               test_dls=test_dls,
+                                                               loss_fn=loss_fn,
+                                                               mode=args.mode,
+                                                               frames=test_datasets[0].true_frames,
+                                                               dt=args.dt,
+                                                               act=torch.sigmoid)
 
-            best_test_acc = save_results(args.results_path, test_acc, best_test_acc, encoder_outputs,
-                                         decoder_outputs, encoding_network, decoding_network)
+            best_test_acc = save_results(args.results_path, test_acc, best_test_acc,
+                                          encoder_outputs, decoder_outputs, sparks)
+
             if args.mode == 'prediction':
-                print("Epoch %d, test acc: %.3f" % (epoch, test_acc))
+                pbar.set_description("Epoch %d, test acc: %.3f" % (epoch, test_acc))
             else:
-                print("Epoch %d, test loss: %.3f" % (epoch, -test_acc))
+                pbar.set_description("Epoch %d, test loss: %.3f" % (epoch, -test_acc))

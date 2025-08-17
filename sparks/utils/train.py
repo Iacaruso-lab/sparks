@@ -7,6 +7,7 @@ from torch.nn import NLLLoss
 from sparks.utils.misc import LongCycler
 from sparks.utils.losses import kl_loss
 from sparks.models.sparks import SPARKS
+from sparks.data.base import StandardTargetProvider, TargetProvider
 
 
 def update_and_reset(sparks: SPARKS,
@@ -37,7 +38,7 @@ def update_and_reset(sparks: SPARKS,
 
 def train_on_batch(sparks: SPARKS,
                    inputs: torch.tensor,
-                   targets: torch.tensor,
+                   target_provider: TargetProvider,
                    loss_fn: Any,
                    optimizer: torch.optim.Optimizer,
                    beta: float = 0.,
@@ -70,6 +71,7 @@ def train_on_batch(sparks: SPARKS,
 
     online = kwargs.get('online', False)
     sess_id = kwargs.get('sess_id', 0)
+    batch_idxs = kwargs.get('batch_idxs', np.arange(len(inputs)))
 
     # Number of burn-in timesteps
     burnin = kwargs.get('burnin', 0)
@@ -87,7 +89,7 @@ def train_on_batch(sparks: SPARKS,
         encoder_outputs, decoder_outputs, mu, logvar = sparks(inputs[..., t], encoder_outputs=encoder_outputs,
                                                               sess_id=sess_id)
 
-        target = targets[..., t:t + sparks.tau_f].reshape(targets.shape[0], -1).to(device)
+        target = target_provider.get_target(batch_idxs, t, sparks.tau_f, device)
 
         if isinstance(loss_fn, NLLLoss):  # NLLLoss expects 0d or 1d targets
             target = target[:, 0].long()
@@ -138,14 +140,19 @@ def train(sparks: SPARKS,
     """
 
     sess_ids = kwargs.get('sess_ids', np.arange(len(train_dls)))
+    unsupervised = kwargs.get('unsupervised', False)
 
     random_order = np.random.choice(np.arange(len(train_dls)), size=len(train_dls), replace=False)
     train_iterator = LongCycler([train_dls[i] for i in random_order])
 
     for i, (inputs, targets) in enumerate(train_iterator):
+        if unsupervised:
+            target_provider = StandardTargetProvider(inputs)
+        else:
+            target_provider = StandardTargetProvider(targets)
         train_on_batch(sparks=sparks,
                        inputs=inputs,
-                       targets=targets,
+                       target_provider=target_provider,
                        loss_fn=loss_fn,
                        optimizer=optimizer,
                        beta=beta,

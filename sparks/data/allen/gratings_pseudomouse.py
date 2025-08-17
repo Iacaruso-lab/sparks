@@ -1,12 +1,12 @@
 import os
 from typing import Any
 import pickle
-from collections import ChainMap
 
 import numpy as np
 import torch
 
 from sparks.data.allen.utils import sample_correct_unit_ids, make_spike_histogram
+from sparks.data.base import BaseDataset
 
 
 def load_preprocessed_spikes(data_dir, neuron_type, min_snr=1.5):
@@ -177,7 +177,7 @@ def make_gratings_dataset(data_dir: os.path,
     return dataset_train, train_dl, dataset_test, test_dl
 
 
-class AllenGratingsPseudoMouseDataset(torch.utils.data.Dataset):
+class AllenGratingsPseudoMouseDataset(BaseDataset):
     def __init__(self,
                  spikes: dict,
                  conds: np.ndarray,
@@ -220,11 +220,6 @@ class AllenGratingsPseudoMouseDataset(torch.utils.data.Dataset):
         time_bin_edges = np.arange(0, 0.25 + self.dt, self.dt)
         return make_spike_histogram(idx, self.good_units_ids, self.spikes, time_bin_edges)
 
-    def __getitem__(self, index: int) -> Any:
-        """
-        :param: index: int
-         Index
-        :return: spikes histogram for the given index
-        """
-
-        return self.get_spikes(index), self.targets[index]
+    def get_target(self, index):
+        num_timesteps = int(0.25 // self.dt)
+        self.targets[index].unsqueeze(2).repeat_interleave(num_timesteps, dim=-1)

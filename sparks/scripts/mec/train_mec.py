@@ -99,7 +99,9 @@ if __name__ == "__main__":
               loss_fn=loss_fn,
               optimizer=optimizer,
               beta=args.beta,
-              device=args.device)
+              online=args.online,
+              device=args.device,
+              unsupervised=True)
         scheduler.step()
 
         if (epoch + 1) % args.test_period == 0:

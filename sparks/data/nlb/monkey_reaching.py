@@ -5,7 +5,8 @@ import numpy as np
 import torch
 from nlb_tools.nwb_interface import NWBDataset
 
-from sparks.data.misc import smooth, normalize
+from sparks.data.misc import smooth
+from sparks.data.base import BaseDataset
 
 
 def process_dataset(dataset_path: os.path, mode='prediction', y_keys: str = 'hand_pos'):
@@ -82,7 +83,7 @@ def make_monkey_reaching_dataset(dataset_path: os.path,
 
     return train_dataset, test_dataset, train_dl, test_dl
 
-class MonkeyReachingDataset(torch.utils.data.Dataset):
+class MonkeyReachingDataset(BaseDataset):
     def __init__(self, 
                  align_data: List,
                  lag_align_data: List,
@@ -141,21 +142,15 @@ class MonkeyReachingDataset(torch.utils.data.Dataset):
     def __len__(self):
         return len(self.x_trial_data)
 
-    def __getitem__(self, index: int):
-        """
-        :param: index: int
-         Index
-        :return: tuple: (data, target) where target is index of the target class.
-        """
-
+    def get_spikes(self, index: int):
         features = self.x_trial_data[index]
         if self.smooth:
             features = np.vstack([smooth(feature, window=200) for feature in features])
 
-        features = torch.tensor(features).float()
-        target = torch.tensor(self.y_trial_data[index]).float()
+        return torch.tensor(features).float()
 
-        if self.mode == 'prediction':
-            return features, target
+    def get_target(self, index: int):
+        if self.mode == 'unsupervised':
+            return torch.Tensor(index)
         else:
-            return features, features
+            return torch.tensor(self.y_trial_data[index]).float()

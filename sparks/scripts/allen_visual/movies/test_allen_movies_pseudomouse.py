@@ -5,9 +5,8 @@ import numpy as np
 import torch
 
 from sparks.data.allen.movies_pseudomouse import make_pseudomouse_allen_movies_dataset
-from sparks.models.decoders import get_decoder
-from sparks.models.encoders import HebbianTransformerEncoder
-from sparks.utils.test import test
+from sparks.scripts.allen_visual.movies.utils.misc import make_network_and_optimizers
+from sparks.scripts.allen_visual.movies.utils.test import test
 import json
 
 if __name__ == "__main__":
@@ -16,28 +15,17 @@ if __name__ == "__main__":
 
     # Training arguments
     parser.add_argument('--home', default=r"/home")
-    parser.add_argument('--n_epochs', type=int, default=200, help='Number of training epochs')
-    parser.add_argument('--test_period', type=int, default=5, help='Test period in number of epochs')
-    parser.add_argument('--lr', type=float, default=0.001, help='Learning rate')
-    parser.add_argument('--beta', type=float, default=0.001, help='KLD regularisation')
     parser.add_argument('--batch_size', type=int, default=9, help='Batch size')
     parser.add_argument('--num_workers', type=int, default=0, help='For dataloading')
-    parser.add_argument('--online', action='store_true', default=False,
-                        help='Whether to use the online gradient descent algorithm')
 
     # Encoder parameters
     parser.add_argument('--latent_dim', type=int, default=64, help='Size of the latent space')
     parser.add_argument('--n_heads', type=int, default=1, help='Number of attention heads')
     parser.add_argument('--embed_dim', type=int, default=256, help='Size of attention embeddings')
     parser.add_argument('--n_layers', type=int, default=0, help='Number of conventional attention layers')
-    parser.add_argument('--dec_type', type=str, default='mlp',
-                        help='Type of decoder (one of linear, mlp or deconv)')
-    parser.add_argument('--output_type', type=str, default='flatten',
-                          help='Output architecture for the decoder')
     parser.add_argument('--tau_p', type=int, default=6, help='Past window size')
     parser.add_argument('--tau_f', type=int, default=1, help='Future window size')
     parser.add_argument('--tau_s', type=float, default=0.5, help='STDP decay')
-    parser.add_argument('--alpha', type=float, default=1., help='')
 
     # Data parameters
     parser.add_argument('--mode', type=str, default='prediction',
@@ -85,54 +73,21 @@ if __name__ == "__main__":
                                                            mode=args.mode,
                                                            ds=args.ds,
                                                            correct_units_ids=correct_units_ids)
-    
-    encoding_network = HebbianTransformerEncoder(n_neurons_per_sess=len(dataset.good_units_ids),
-                                                 embed_dim=args.embed_dim,
-                                                 latent_dim=args.latent_dim,
-                                                 tau_s_per_sess=args.tau_s,
-                                                 dt_per_sess=args.dt,
-                                                 n_layers=args.n_layers,
-                                                 n_heads=args.n_heads,
-                                                 output_type=args.output_type,
-                                                 sliding=args.sliding,
-                                                 window_size=args.window_size,
-                                                 block_size=args.block_size,
-                                                 alpha=args.alpha).to(args.device)
 
-    if args.mode == 'prediction':
-        output_size = 900
-    elif args.mode == 'reconstruction':
-        output_size = np.prod(dataset.true_frames.shape[:-1])
-    elif args.mode == 'unsupervised':
-        output_size = args.n_neurons
-    else:
-        raise NotImplementedError
-
-    decoding_network = get_decoder(output_dim_per_session=output_size * args.tau_f, args=args,
-                                   n_neurons=args.n_neurons, softmax=True if args.mode == 'prediction' else False)
+    sparks, optimizer, scheduler, loss_fn = make_network_and_optimizers(args, datasets=[dataset])
 
     # Load pretrained network and add neural attention layers for additional sessions
-    encoding_network.load_state_dict(torch.load(os.path.join(args.weights_folder, 'encoding_network.pt')))
-    decoding_network.load_state_dict(torch.load(os.path.join(args.weights_folder, 'decoding_network.pt')))
-
-    if args.mode == 'prediction':
-        loss_fn = torch.nn.NLLLoss()
-    else:
-        loss_fn = torch.nn.BCEWithLogitsLoss()
+    sparks.load_state_dict(torch.load(os.path.join(args.weights_folder, 'sparks.pt')))
 
     best_test_acc = -np.inf
 
-    test_acc, encoder_outputs, decoder_outputs = test(encoder=encoding_network,
-                                                        decoder=decoding_network,
+    test_acc, encoder_outputs, decoder_outputs = test(sparks=sparks,
                                                         test_dls=[dl],
-                                                        true_frames=dataset.true_frames,
-                                                        mode=args.mode,
-                                                        latent_dim=args.latent_dim,
-                                                        tau_p=args.tau_p,
-                                                        tau_f=args.tau_f,
-                                                        dt=args.dt,
                                                         loss_fn=loss_fn,
-                                                        device=args.device)
+                                                        mode=args.mode,
+                                                        frames=dataset.true_frames,
+                                                        dt=args.dt,
+                                                        act=torch.sigmoid)
 
     np.save(args.weights_folder + '/test_dec_outputs_all.npy', decoder_outputs.cpu().numpy())
     np.save(args.weights_folder + '/test_enc_outputs_all.npy', encoder_outputs.cpu().numpy())

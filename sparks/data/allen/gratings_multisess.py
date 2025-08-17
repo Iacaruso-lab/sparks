@@ -1,13 +1,11 @@
 import os
-from typing import Any, List
+from typing import List
 import pickle
-from collections import ChainMap
 
 from allensdk.brain_observatory.ecephys.ecephys_project_cache import EcephysProjectCache
 import numpy as np
 import torch
 
-from sparks.data.allen.utils import sample_correct_unit_ids, make_spike_histogram
 from sparks.data.allen.gratings_pseudomouse import AllenGratingsPseudoMouseDataset
 from sparks.data.allen.preprocess.utils import get_correct_units
 
@@ -90,7 +88,6 @@ def make_gratings_dataset(data_dir: os.path,
                           num_workers: int = 0,
                           batch_size: int = 1,
                           correct_units_ids: np.ndarray = None,
-                          seed: int = None,
                           target_type: str = 'class'):
 
     """
@@ -118,8 +115,6 @@ def make_gratings_dataset(data_dir: os.path,
         Number of samples per batch.
     correct_units_ids : np.ndarray, optional
         Array containing the IDs of correct neural units, defaults to None.
-    seed : int, optional
-        Seed for random generators, defaults to None (random seed).
     target_type : str, optional
         Type of target, either 'class' or 'freq'.
 
