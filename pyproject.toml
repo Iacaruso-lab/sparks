@@ -27,7 +27,9 @@ dependencies = ["scikit-learn",
     "scipy",
     "torch",
     "tqdm",
-    "numpy"]
+    "numpy",
+    "pynwb",
+    "pandas"]
 
 [tool.setuptools.packages]
 find = {}
@@ -37,5 +39,4 @@ Homepage = "https://github.com/FrancisCrickInstitute/SPARKS"
 Issues = "https://github.com/FrancisCrickInstitute/SPARKS/issues"
 
 [project.optional-dependencies]
-demos = ["pynwb", "pandas", "jupyter", "matplotlib"]
-monkey = ["pynwb", "pandas"]
+demos = ["jupyter", "matplotlib"]

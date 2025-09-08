@@ -174,3 +174,45 @@ def test_add_session_with_joint_decoder():
     )
     
     assert decoder_outputs.shape == (batch_size, output_dim_per_session * tau_f)
+
+def test_custom_decoder():
+    """Test SPARKS model with a custom decoder"""
+    from sparks.models.sparks import SPARKS
+    from sparks.models.decoders import linear
+    
+    n_neurons_per_sess = 50
+    embed_dim = 64
+    latent_dim = 32
+    tau_p = 2
+    tau_f = 1
+    output_dim_per_session = 10
+    session_id = 0
+    batch_size = 4
+    
+    custom_decoder = linear(in_dim=latent_dim * tau_p,
+        output_dim_per_session=[output_dim_per_session],
+        id_per_session=[session_id]
+    )
+    
+    model = SPARKS(
+        n_neurons_per_session=n_neurons_per_sess,
+        embed_dim=embed_dim,
+        latent_dim=latent_dim,
+        tau_p=tau_p,
+        tau_f=tau_f,
+        id_per_session=[session_id],
+        output_dim_per_session=output_dim_per_session,
+        decoder=custom_decoder
+    )
+    
+    # Test forward pass
+    x = torch.randn(batch_size, n_neurons_per_sess)
+    encoder_outputs = torch.zeros(batch_size, latent_dim, tau_p)
+    
+    encoder_outputs, decoder_outputs, mu, logvar = model(
+        x,
+        encoder_outputs=encoder_outputs,
+        session_id=session_id
+    )
+    
+    assert decoder_outputs.shape == (batch_size, output_dim_per_session * tau_f)
