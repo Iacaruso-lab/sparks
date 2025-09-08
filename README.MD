@@ -37,10 +37,11 @@ Make sure to 👀 watch or ⭐️ star this repository to keep updated!
 - Beta: sliding-window attention to scale the model for modern large recordings
 
 # Reference
-
 - 📄 **Preprint**:
 
 Available now on [BiorXiv](https://www.biorxiv.org/content/10.1101/2024.08.13.607787v2)!
+
+- Scripts to reproduce paper results [here](https://github.com/Iacaruso-lab/sparks-examples)
 
 # License
 - SPARKS is an open source software under a GLPv3 license.
