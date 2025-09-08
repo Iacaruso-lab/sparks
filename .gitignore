@@ -16,3 +16,5 @@ __pycache__/
 *.egg-info
 .pypirc
 dist/
+.vscode/
+.pytest_cache/
