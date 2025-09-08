@@ -27,11 +27,20 @@ It can perform supervised or unsupervised to produce low-dimensional latent embe
 
 Make sure to 👀 watch or ⭐️ star this repository to keep updated!
 
+# New release v0.2.0!
+- New API: no need to separately define the encoder and decoder anymore
+- Easier prototyping without needing to dig into the implementation details
+- Better support of custom architectures for the decoder and the projection layer of the encoder
+- More flexible definition of configurations for different Hebbian attention layers
+- Softly bounded STDP provides much more stable results for long recordings
+- New demo notebook for training a single model with several recordings
+- Beta: sliding-window attention to scale the model for modern large recordings
+
 # Reference
 
 - 📄 **Preprint**:
 
-Available now on [BiorXiv](https://www.biorxiv.org/content/10.1101/2024.08.13.607787v1)!
+Available now on [BiorXiv](https://www.biorxiv.org/content/10.1101/2024.08.13.607787v2)!
 
 # License
 - SPARKS is an open source software under a GLPv3 license.
