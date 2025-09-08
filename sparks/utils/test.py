@@ -5,7 +5,7 @@ import torch
 
 from sparks.utils.misc import identity
 from sparks.models.sparks import SPARKS
-from sparks.data.base import StandardTargetProvider, TargetProvider
+from sparks.data.providers import StandardTargetProvider, TargetProvider
 
 
 @torch.no_grad()
@@ -31,7 +31,7 @@ def test_on_batch(sparks: SPARKS,
         **kwargs (dict, optional): Additional keyword arguments for advanced configurations.
 
         Optional arguments include:
-            - sess_id (int): Session identifier when training with multiple sessions. Default is 0.
+            - session_id (int): Session identifier when training with multiple sessions. Default is 0.
             - online (bool): If True, updates the model parameters at every time-step. Default is False.
             - burnin (int): The number of initial steps to exclude from training. Default is 0.
             - act (callable): Activation function to apply to the decoder outputs. Default is identity.
@@ -43,7 +43,7 @@ def test_on_batch(sparks: SPARKS,
         decoder_outputs_batch (torch.tensor): The outputs from the decoder.
     """
 
-    sess_id = kwargs.get('sess_id', 0)
+    session_id = kwargs.get('session_id', 0)
     burnin = kwargs.get('burnin', 0)
     act = kwargs.get('act', identity)
     batch_idxs = kwargs.get('batch_idxs', np.arange(len(inputs)))
@@ -54,11 +54,11 @@ def test_on_batch(sparks: SPARKS,
     decoder_outputs_batch = torch.Tensor().to(sparks.device)
 
     for t in range(burnin):
-        encoder_outputs_batch, _, _, _ = sparks(inputs[..., t], encoder_outputs=encoder_outputs_batch, sess_id=sess_id)
+        encoder_outputs_batch, _, _, _ = sparks(inputs[..., t], encoder_outputs=encoder_outputs_batch, session_id=session_id)
 
     for t in range(burnin, inputs.shape[-1]):
         encoder_outputs_batch, decoder_outputs, _, _ = sparks(inputs[..., t], encoder_outputs=encoder_outputs_batch,
-                                                              sess_id=sess_id)
+                                                              session_id=session_id)
 
         decoder_outputs_batch = torch.cat((decoder_outputs_batch,
                                            act(decoder_outputs).unsqueeze(2)), dim=-1)
@@ -93,7 +93,7 @@ def test(sparks: SPARKS,
         **kwargs (dict, optional): Additional keyword arguments for advanced configurations.
 
         Optional arguments include:
-            - sess_ids (np.ndarray): Array of session identifiers when training with multiple sessions. Default: np.arange(len(test_dls)).
+            - session_ids (np.ndarray): Array of session identifiers when training with multiple sessions. Default: np.arange(len(test_dls)).
             - online (bool): If True, updates the model parameters at every time-step. Default is False.
             - burnin (int): The number of initial steps to exclude from training. Default is 0.
             - act (callable): Activation function to apply to the decoder outputs. Default is identity.
@@ -108,7 +108,7 @@ def test(sparks: SPARKS,
     decoder_outputs = torch.Tensor()
     test_loss = 0
 
-    sess_ids = kwargs.get('sess_ids', np.arange(len(test_dls)))
+    session_ids = kwargs.get('session_ids', np.arange(len(test_dls)))
     unsupervised = kwargs.get('unsupervised', False)
 
     for i, test_dl in enumerate(test_dls):
@@ -124,7 +124,7 @@ def test(sparks: SPARKS,
                                                                                     test_loss=test_loss,
                                                                                     loss_fn=loss_fn,
                                                                                     device=device,
-                                                                                    sess_id=sess_ids[i],
+                                                                                    session_id=session_ids[i],
                                                                                     **kwargs)
 
             encoder_outputs = torch.cat((encoder_outputs, encoder_outputs_batch), dim=0)

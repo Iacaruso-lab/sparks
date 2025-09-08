@@ -3,7 +3,7 @@ from torch import nn
 
 from sparks.models.attention import EphysAttentionLayer, CalciumAttentionLayer
 from sparks.models.sparse_attention import SlidingWindowEphysAttentionLayer, SlidingWindowCalciumAttentionLayer
-from sparks.models.utils import FeedForward
+from sparks.models.utils import FeedForward, scaled_dot_product
 
 
 class MultiHeadedHebbianAttentionLayer(torch.nn.Module):

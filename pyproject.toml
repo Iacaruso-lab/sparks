@@ -4,15 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sparks-ai"
-version = "0.1.1"
+version = "0.2.0"
 authors = [
   { name="Nicolas Skatchkovsky", email="nicolas.skatchkovsky@crick.ac.uk" },
 ]
+
 keywords = ["Computational neuroscience", "Artificial Intelligence", "GenAI"]
 description = "Sequential Predictive Attention for the Representation of SpiKing Signals"
 readme = "README.md"
 license = {file = "LICENSE.md"}
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 classifiers = ["Development Status :: 4 - Beta",
     "Environment :: GPU :: NVIDIA CUDA",
     "Intended Audience :: Science/Research",
@@ -26,7 +27,6 @@ dependencies = ["scikit-learn",
     "scipy",
     "torch",
     "tqdm",
-    "matplotlib",
     "numpy"]
 
 [tool.setuptools.packages]
@@ -37,4 +37,5 @@ Homepage = "https://github.com/FrancisCrickInstitute/SPARKS"
 Issues = "https://github.com/FrancisCrickInstitute/SPARKS/issues"
 
 [project.optional-dependencies]
-scripts = ["nlb_tools", "allen_sdk", "jupyter"]
+demos = ["pynwb", "pandas", "jupyter", "matplotlib"]
+monkey = ["pynwb", "pandas"]

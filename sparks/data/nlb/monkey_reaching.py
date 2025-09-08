@@ -3,7 +3,7 @@ from typing import List
 
 import numpy as np
 import torch
-from nlb_tools.nwb_interface import NWBDataset
+from sparks.data.nlb.nwb_interface import NWBDataset
 
 from sparks.data.misc import smooth
 from sparks.data.base import BaseDataset

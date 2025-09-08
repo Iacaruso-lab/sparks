@@ -11,7 +11,8 @@ class mlp(nn.Module):
                  in_dim: int,
                  hidden_dims: int,
                  output_dim_per_session: Any,
-                 id_per_sess: np.ndarray = np.array([0])) -> None:
+                 id_per_session: np.ndarray = np.array([0]),
+                 joint_decoder: bool = False) -> None:
 
         """
         Initialize a Multi-Layer Perceptron (MLP).
@@ -29,12 +30,15 @@ class mlp(nn.Module):
             output_dim_per_session (Union[int, List[int]]): The output dimension of the MLP.
             id_per_sess: Defaults to None, the ids of the sessions corresponding to the
                                                 various output layers.
+            joint_decoder (bool): If True, uses a single output layer for all sessions. Default is False.
 
         Returns:
             None
         """
 
         super(mlp, self).__init__()
+
+        self.joint_decoder = joint_decoder
 
         layers = []
 
@@ -43,8 +47,11 @@ class mlp(nn.Module):
             layers.append(nn.ReLU())
             in_dim = h_dim
 
-        self.out_layers = nn.ModuleDict({str(sess_id): nn.Linear(in_dim, output_dim)
-                                         for sess_id, output_dim in zip(id_per_sess, output_dim_per_session)})
+        if joint_decoder:
+            self.out_layers = nn.Linear(in_dim, int(output_dim_per_session))
+        else:
+            self.out_layers = nn.ModuleDict({str(sess_id): nn.Linear(in_dim, output_dim)
+                                            for sess_id, output_dim in zip(id_per_session, output_dim_per_session)})
 
         self.layers = nn.Sequential(*layers)
 
@@ -53,13 +60,17 @@ class mlp(nn.Module):
 
         x = self.layers(x.flatten(1))
 
-        return self.out_layers[sess_id](x)
+        if self.joint_decoder:
+            return self.out_layers(x)
+        else:
+            return self.out_layers[sess_id](x)
 
 
 class linear(nn.Module):
     def __init__(self, in_dim: int,
                  output_dim_per_session: Any,
-                 id_per_sess: Any = None) -> None:
+                 id_per_session: Any = None,
+                 joint_decoder: bool = False) -> None:
 
         """
         Initialize a  fully connected, or dense, layer, with either no activation function or log_softmax.
@@ -72,7 +83,7 @@ class linear(nn.Module):
             output_dim_per_session (Union[int, List[int]]): The output dimension of the MLP.
             id_per_sess (Optional[np.array]): Defaults to None, the ids of the sessions corresponding to the
                                                 various output layers.
-            softmax (bool): Defaults to False. If True, apply a log_softmax activation function to the neuron outputs.
+            joint_decoder (bool): If True, uses a single output layer for all sessions. Default is False.
 
         Returns:
             None
@@ -80,10 +91,18 @@ class linear(nn.Module):
 
         super(linear, self).__init__()
 
-        self.out_layers = nn.ModuleDict({str(sess_id): nn.Linear(in_dim, output_dim)
-                                         for sess_id, output_dim in zip(id_per_sess, output_dim_per_session)})
+        self.joint_decoder = joint_decoder
+
+        if joint_decoder:
+            self.out_layers = nn.Linear(in_dim, int(output_dim_per_session))
+        else:
+            self.out_layers = nn.ModuleDict({str(sess_id): nn.Linear(in_dim, output_dim)
+                                            for sess_id, output_dim in zip(id_per_session, output_dim_per_session)})
 
     def forward(self, x, sess_id: int = 0) -> torch.Tensor:
         sess_id = str(sess_id)
 
-        return self.out_layers[sess_id](x.flatten(1))
+        if self.joint_decoder:
+            return self.out_layers(x.flatten(1))
+        else:
+            return self.out_layers[sess_id](x.flatten(1))

@@ -3,7 +3,7 @@ import numpy as np
 import torch
 from torch.nn import Parameter
 
-from sparks.models.attention import BaseHebbianAttentionLayer
+from sparks.models.attention import BaseHebbianAttentionLayer, EphysAttentionLayer, CalciumAttentionLayer
 
 
 class BaseSlidingWindowAttentionLayer(BaseHebbianAttentionLayer):
@@ -80,8 +80,8 @@ class BaseSlidingWindowAttentionLayer(BaseHebbianAttentionLayer):
         Returns:
             Tuple[torch.Tensor, torch.Tensor]: Pre-synaptic spikes and post-synaptic spikes.
         """
-        pre_spikes = spikes[:, self.neurons].view(spikes.shape[0], -1, self.block_size, 1)  # [B, N/b, b, 1]
-        post_spikes = self.roll(spikes[:, self.neurons])  # [B, N/b, 1, b*w]
+        pre_spikes = spikes.view(spikes.shape[0], -1, self.block_size, 1)  # [B, N/b, b, 1]
+        post_spikes = self.roll(spikes)  # [B, N/b, 1, b*w]
 
         assert post_spikes.shape == torch.Size([spikes.shape[0], spikes.shape[1] // self.block_size, 
                                                 1, self.block_size * self.window_size])
@@ -89,13 +89,13 @@ class BaseSlidingWindowAttentionLayer(BaseHebbianAttentionLayer):
         return pre_spikes, post_spikes
 
     def roll(self, x):
-        if self.config.window_size == 1:
+        if self.window_size == 1:
             return x.view(x.shape[0], x.shape[1] // self.block_size, 1, self.block_size)
         else:
             return x[:, self.roll_indices].view(x.shape[0], x.shape[1] // self.block_size, 
                                                 1, self.block_size * self.window_size)
 
-class SlidingWindowEphysAttentionLayer(BaseSlidingWindowAttentionLayer):
+class SlidingWindowEphysAttentionLayer(BaseSlidingWindowAttentionLayer, EphysAttentionLayer):
     def __init__(self,
                  n_neurons: int,
                  embed_dim: int, 
@@ -159,7 +159,7 @@ class SlidingWindowEphysAttentionLayer(BaseSlidingWindowAttentionLayer):
                               std=np.sqrt(1 / self.n_neurons))
 
 
-class SlidingWindowCalciumAttentionLayer(BaseSlidingWindowAttentionLayer):
+class SlidingWindowCalciumAttentionLayer(BaseSlidingWindowAttentionLayer, CalciumAttentionLayer):
     def __init__(self,
                  n_neurons: int,
                  embed_dim: int, 

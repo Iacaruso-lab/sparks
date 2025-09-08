@@ -16,10 +16,10 @@ class SPARKS(torch.nn.Module):
     """
 
     def __init__(self,
-                 n_neurons_per_sess: Union[int, List[int]],
+                 n_neurons_per_session: Union[int, List[int]],
                  embed_dim: int,
                  latent_dim: int,
-                 id_per_sess: Optional[List[Union[str, int]]] = None,
+                 id_per_session: Optional[List[Union[str, int]]] = None,
                  tau_p: int = 1,
                  tau_f: Optional[int] = 1,
                  hebbian_config: Union[HebbianAttentionConfig, List[HebbianAttentionConfig]] = HebbianAttentionConfig(),
@@ -28,7 +28,8 @@ class SPARKS(torch.nn.Module):
                  share_projection_head: bool = False,
                  decoder: Optional[torch.nn.Module] = None,
                  output_dim_per_session: Optional[Union[int, List[int]]] = None,
-                 device: torch.device = torch.device('cpu')):
+                 joint_decoder: bool = False,
+                 device: torch.device = torch.device('cpu')) -> None:
 
         super().__init__()
 
@@ -38,18 +39,18 @@ class SPARKS(torch.nn.Module):
         self.embed_dim = embed_dim
         self.device = device
 
-        if isinstance(n_neurons_per_sess, int):
-            n_neurons_per_sess = [n_neurons_per_sess]
+        if isinstance(n_neurons_per_session, int):
+            n_neurons_per_session = [n_neurons_per_session]
 
-        if id_per_sess is None:
-            id_per_sess = [str(i) for i in range(len(n_neurons_per_sess))]
-        elif len(id_per_sess) != len(n_neurons_per_sess):
-            raise ValueError("`id_per_sess` must have the same length as `n_neurons_per_sess`.")
+        if id_per_session is None:
+            id_per_session = [str(i) for i in range(len(n_neurons_per_session))]
+        elif len(id_per_session) != len(n_neurons_per_session):
+            raise ValueError("`id_per_session` must have the same length as `n_neurons_per_session`.")
 
-        self.encoder = HebbianTransformer(n_neurons_per_sess=n_neurons_per_sess,
+        self.encoder = HebbianTransformer(n_neurons_per_session=n_neurons_per_session,
                                           embed_dim=embed_dim,
                                           latent_dim=latent_dim,
-                                          id_per_sess=id_per_sess,
+                                          id_per_session=id_per_session,
                                           hebbian_config=hebbian_config,
                                           attention_config=attention_config,
                                           projection_config=projection_config,
@@ -61,17 +62,24 @@ class SPARKS(torch.nn.Module):
             hid_dims = [int(np.mean([n_inputs_decoder, np.mean(output_dim_per_session)]))]
             if output_dim_per_session is None:
                 raise ValueError("`output_dim_per_session` must be provided if `decoder` is None.")
+            if isinstance(output_dim_per_session, int) and not joint_decoder:
+                if len(n_neurons_per_session) == 1:
+                    output_dim_per_session = [output_dim_per_session]
+                else:
+                    raise ValueError("`output_dim_per_session` must be a list if `joint_decoder` is False "
+                    "and there is more than one session.")
             if isinstance(output_dim_per_session, int):
-                output_dim_per_session = [output_dim_per_session] * len(n_neurons_per_sess)
-            output_dim_per_session = [dim * tau_f for dim in output_dim_per_session]
+                output_dim_per_session = output_dim_per_session * tau_f
+            else:
+                output_dim_per_session = [dim * tau_f for dim in output_dim_per_session]
 
             decoder = mlp(in_dim=n_inputs_decoder, hidden_dims=hid_dims,
                           output_dim_per_session=output_dim_per_session,
-                          id_per_sess=id_per_sess).to(device)
+                          id_per_session=id_per_session, joint_decoder=joint_decoder).to(device)
 
         self.decoder = decoder
 
-    def forward(self, x: torch.Tensor, encoder_outputs, sess_id: Union[str, int]) -> Tuple[torch.Tensor, torch.Tensor,
+    def forward(self, x: torch.Tensor, encoder_outputs, session_id: Union[str, int]) -> Tuple[torch.Tensor, torch.Tensor,
                                                                                            torch.Tensor, torch.Tensor]:
         """
         The forward pass of the autoencoder.
@@ -84,7 +92,7 @@ class SPARKS(torch.nn.Module):
         Args:
             inputs (torch.tensor): The input data tensor.
             encoder_outputs (torch.tensor): The collection of past encoder output tensors.
-            sess_id (int, optional): The session id. Default is 0.
+            session_id (int, optional): The session id. Default is 0.
 
         Returns:
             encoder_outputs (torch.tensor): The encoder outputs tensor with the newly computed encoder output appended.
@@ -93,16 +101,16 @@ class SPARKS(torch.nn.Module):
             logvar (torch.tensor): The log-variance of the latent distribution computed by the encoder.
         """
 
-        mu, logvar = self.encoder(x.view(x.shape[0], -1).float().to(self.device), sess_id)
+        mu, logvar = self.encoder(x.view(x.shape[0], -1).float().to(self.device), session_id)
         enc_outputs = self.encoder.reparametrize(mu, logvar)
 
         encoder_outputs = torch.cat((encoder_outputs, enc_outputs.unsqueeze(2)), dim=2)
-        decoder_outputs = self.decoder(encoder_outputs[..., -self.tau_p:], sess_id)
+        decoder_outputs = self.decoder(encoder_outputs[..., -self.tau_p:], session_id)
 
         return encoder_outputs, decoder_outputs, mu, logvar
         
 
-    def generate(self, z: torch.Tensor) -> torch.Tensor:
+    def generate(self, z: torch.Tensor, session_id: Union[str, int]) -> torch.Tensor:
         """
         Generates an output from a given latent vector `z`.
 
@@ -115,4 +123,27 @@ class SPARKS(torch.nn.Module):
         Returns:
             The output generated by the decoder.
         """
-        return self.decoder(z)
+        return self.decoder(z, session_id)
+    
+
+    def add_session(self, n_neurons: int, session_id: Union[str, int],
+                    hebbian_config: Optional[HebbianAttentionConfig] = None,
+                    new_output_dim: Optional[int] = None) -> None:
+
+        """ 
+        Adds a new session to the SPARKS model by incorporating a new Hebbian attention block in the encoder
+        and adjusting the decoder to accommodate the new session.
+        This method allows the model to adapt to new sessions with potentially different numbers of neurons.
+        Args:
+            n_neurons (int): The number of input neurons for the new session.
+            session_id (Union[str, int]): A unique identifier for the new session.
+            hebbian_config (HebbianAttentionConfig, optional): Configuration parameters for the new Hebbian block.
+                                                              If None, default parameters are used.
+        """
+        self.encoder.add_neural_block(n_neurons=n_neurons,
+                                      session_id=session_id,
+                                      hebbian_config=hebbian_config)
+        
+        if not self.decoder.joint_decoder:
+            self.decoder.out_layers[str(session_id)] = torch.nn.Linear(self.decoder.layers[-2].out_features, 
+                                                                       new_output_dim).to(self.device)

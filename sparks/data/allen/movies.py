@@ -1,42 +1,17 @@
-from typing import Any
-
 import numpy as np
 import torch
 
 from sparks.data.allen.utils import make_spike_histogram
-from sparks.data.misc import normalize
 from sparks.data.base import BaseDataset
 
 
 class AllenMoviesDataset(BaseDataset):
-    def __init__(self,
-                 dt: float = 0.01,
-                 cache: object = None,
-                 ds: int = 1,
-                 mode: object = 'prediction') -> None:
+    def __init__(self) -> None:
         """
-        Pseudo-mouse dataset class for Allen Brain Observatory Visual coding natural movies data
-
-        Parameters
-        --------------------------------------
-        :param spikes: dict
-        :param good_units_ids: np.ndarray
-        :param dt: float
-        :param ds: int
-        :param cache: EcephysProjectCache
+        Pseudo-mouse abstract dataset class for Allen Brain Observatory Visual coding natural movies data
         """
 
         super(AllenMoviesDataset).__init__()
-
-        self.dt = dt
-        self.mode = mode
-
-        if cache is not None:
-            images = torch.tensor(cache.get_natural_movie_template(1)).float()
-            reduced_images = torch.nn.functional.max_pool2d(images, (ds, ds))
-            self.true_frames = normalize(reduced_images).transpose(2, 0).transpose(1, 0)
-        else:
-            self.true_frames = None
 
     def __len__(self):
         raise NotImplementedError
@@ -46,37 +21,32 @@ class AllenMoviesDataset(BaseDataset):
 
     def get_target(self, index):
         """
-        Get movie frame targets
+        Return batch indices, actual target logic is in the TargetProvider
         """
-        if np.isin(self.mode, ['prediction', 'reconstruction']):
-            return self.targets
-        else:
-            return torch.Tensor(index).unsqueeze(0)
+        return torch.tensor([index])
+
 
 class AllenMoviesNpxDataset(AllenMoviesDataset):
     def __init__(self,
                  spikes: dict,
                  good_units_ids: np.ndarray,
-                 dt: float = 0.01,
-                 cache=None,
-                 ds: int = 1,
-                 mode='prediction') -> None:
+                 dt: float = 0.01) -> None:
         """
         Pseudo-mouse dataset class for Allen Brain Observatory Visual coding natural movies data
 
         Parameters
         --------------------------------------
-        :param spikes: dict
+        :param spikes: dict of spike times per unit id
         :param good_units_ids: np.ndarray
         :param dt: float
         :param ds: int
-        :param cache: EcephysProjectCache
         """
 
-        super(AllenMoviesNpxDataset, self).__init__(dt, cache, ds, mode)
+        super(AllenMoviesNpxDataset, self).__init__()
 
         self.good_units_ids = good_units_ids
         self.spikes = spikes
+        self.time_bin_edges = np.concatenate((np.arange(0, 30., dt), np.array([30.])))
 
     def __len__(self):
         return len(self.spikes[self.good_units_ids[0]])
@@ -92,12 +62,7 @@ class AllenMoviesCaDataset(AllenMoviesDataset):
     def __init__(self,
                  n_neurons: int = 10,
                  seed: int = 111,
-                 train: bool = True,
-                 dt: float = 0.01,
-                 cache=None,
-                 ds: int = 1,
-                 mode='prediction') -> None:
-
+                 train: bool = True) -> None:
         """
         Pseudo-mouse dataset class for Allen Brain Observatory Visual coding calcium imaging data
 
@@ -105,7 +70,7 @@ class AllenMoviesCaDataset(AllenMoviesDataset):
         --------------------------------------
         """
 
-        super(AllenMoviesCaDataset, self).__init__(dt, cache, ds, mode)
+        super(AllenMoviesCaDataset, self).__init__()
         from cebra import datasets
 
         if train:

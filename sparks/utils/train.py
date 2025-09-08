@@ -7,7 +7,7 @@ from torch.nn import NLLLoss
 from sparks.data.misc import LongCycler
 from sparks.utils.losses import kl_loss
 from sparks.models.sparks import SPARKS
-from sparks.data.base import StandardTargetProvider, TargetProvider
+from sparks.data.providers import StandardTargetProvider, TargetProvider
 
 
 def update_and_reset(sparks: SPARKS,
@@ -62,7 +62,7 @@ def train_on_batch(sparks: SPARKS,
         **kwargs: Additional keyword arguments.
         Optional arguments include:
             - online (bool): If True, updates the model parameters at every time-step. Default is False.
-            - sess_id (int): Session identifier when training with multiple sessions. Default is 0.
+            - session_id (int): Session identifier when training with multiple sessions. Default is 0.
             - burnin (int): The number of initial steps to exclude from training. Default is 0.
 
     Returns:
@@ -70,7 +70,7 @@ def train_on_batch(sparks: SPARKS,
     """
 
     online = kwargs.get('online', False)
-    sess_id = kwargs.get('sess_id', 0)
+    session_id = kwargs.get('session_id', 0)
     batch_idxs = kwargs.get('batch_idxs', np.arange(len(inputs)))
 
     # Number of burn-in timesteps
@@ -83,17 +83,14 @@ def train_on_batch(sparks: SPARKS,
 
     with torch.no_grad():
         for t in range(burnin):
-            encoder_outputs, _, _, _ = sparks(inputs[..., t], encoder_outputs=encoder_outputs, sess_id=sess_id)
+            encoder_outputs, _, _, _ = sparks(inputs[..., t], encoder_outputs=encoder_outputs, session_id=session_id)
 
     for t in range(burnin, inputs.shape[-1] - sparks.tau_f + 1):
         encoder_outputs, decoder_outputs, mu, logvar = sparks(inputs[..., t], encoder_outputs=encoder_outputs,
-                                                              sess_id=sess_id)
+                                                              session_id=session_id)
 
         target = target_provider.get_target(batch_idxs, t, sparks.tau_f, device)
-
-        if isinstance(loss_fn, NLLLoss):  # NLLLoss expects 0d or 1d targets
-            target = target[:, 0].long()
-
+        
         # Online updates the loss at every time-step
         if online:
             loss = kl_loss(decoder_outputs, target, loss_fn, mu, logvar, beta)
@@ -102,7 +99,7 @@ def train_on_batch(sparks: SPARKS,
             encoder_outputs.detach_()
         else:
             loss += kl_loss(decoder_outputs, target, loss_fn, mu, logvar, beta)
-
+ 
         torch.cuda.empty_cache()
 
     if not online:
@@ -131,7 +128,7 @@ def train(sparks: SPARKS,
         **kwargs: Additional keyword arguments.
 
         Optional arguments include:
-            - sess_ids (np.ndarray): Array of session identifiers when training with multiple sessions. Default: np.arange(len(train_dls)).
+            - session_ids (np.ndarray): Array of session identifiers when training with multiple sessions. Default: np.arange(len(train_dls)).
             - online (bool): If True, updates the model parameters at every time-step. Default is False.
             - burnin (int): The number of initial steps to exclude from training. Default is 0.
 
@@ -139,7 +136,7 @@ def train(sparks: SPARKS,
         None. The model parameters are updated inline.
     """
 
-    sess_ids = kwargs.get('sess_ids', np.arange(len(train_dls)))
+    session_ids = kwargs.get('session_ids', np.arange(len(train_dls)))
     unsupervised = kwargs.get('unsupervised', False)
 
     random_order = np.random.choice(np.arange(len(train_dls)), size=len(train_dls), replace=False)
@@ -156,5 +153,5 @@ def train(sparks: SPARKS,
                        loss_fn=loss_fn,
                        optimizer=optimizer,
                        beta=beta,
-                       sess_id=sess_ids[random_order[i % len(train_dls)]],
+                       session_id=session_ids[random_order[i % len(train_dls)]],
                        **kwargs)

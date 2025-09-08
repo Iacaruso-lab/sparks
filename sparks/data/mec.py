@@ -13,9 +13,11 @@ def spikes_downsample(spikes, downsampling_factor, mode='mean'):
     bins = np.arange(0, spikes.shape[-1] + downsampling_factor, downsampling_factor)
     spike_times = spikes * np.arange(spikes.shape[-1])[None, :]
     if mode == 'mean':
-        return np.vstack([(np.histogram(spike_times_unit[spike_times_unit != 0], bins)[0] / downsampling_factor)[None, :] for spike_times_unit in spike_times]).astype(float)
+        return np.vstack([(np.histogram(spike_times_unit[spike_times_unit != 0], bins)[0] / downsampling_factor)[None, :] 
+                          for spike_times_unit in spike_times]).astype(float)
     elif mode == 'max':
-        return np.vstack([(np.histogram(spike_times_unit[spike_times_unit != 0], bins)[0] > 0)[None, :] for spike_times_unit in spike_times]).astype(float)
+        return np.vstack([(np.histogram(spike_times_unit[spike_times_unit != 0], bins)[0] > 0)[None, :]
+                           for spike_times_unit in spike_times]).astype(float)
 
 
 def fire_rate(calcium_activity, bin_size):
@@ -133,4 +135,4 @@ class MECDataset(BaseDataset):
         return torch.tensor(spikes[:, :self.min_length])
 
     def get_target(self, index: int):
-        return torch.Tensor(index).unsqueeze(0)
+        return torch.tensor([index])

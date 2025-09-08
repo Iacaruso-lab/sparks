@@ -1,6 +1,5 @@
-from typing import List, Union, Optional, Type, Dict, Any, Tuple
+from typing import List, Union, Optional, Tuple
 
-import numpy as np
 import torch
 import torch.nn as nn
 
@@ -14,10 +13,10 @@ class HebbianTransformer(nn.Module):
     This transformer encoder includes a Hebbian Attention Block, and optional conventional attention blocks.
 
     Args:
-        n_neurons_per_sess (Union[int, List[int]]): Number of input neurons for one or more sessions.
+        n_neurons_per_session (Union[int, List[int]]): Number of input neurons for one or more sessions.
         embed_dim (int): The embedding dimension for the attention mechanism.
         latent_dim (int): The dimensionality of the latent space.
-        id_per_sess (Optional[List[Union[str, int]]]): Unique identifiers for each session.
+        id_per_session (Optional[List[Union[str, int]]]): Unique identifiers for each session.
                                                     If None, defaults to `[0, 1, ..., N-1]`.
         hebbian_config (HebbianConfig): Configuration for the Hebbian attention block.
         attention_config (AttentionConfig): Configuration for conventional attention layers.
@@ -30,10 +29,10 @@ class HebbianTransformer(nn.Module):
         None
     """
     def __init__(self,
-                 n_neurons_per_sess: Union[int, List[int]],
+                 n_neurons_per_session: Union[int, List[int]],
                  embed_dim: int,
                  latent_dim: int,
-                 id_per_sess: Optional[List[Union[str, int]]] = None,
+                 id_per_session: Optional[List[Union[str, int]]] = None,
                  hebbian_config: Union[HebbianAttentionConfig, List[HebbianAttentionConfig]] = HebbianAttentionConfig(),
                  attention_config: AttentionConfig = AttentionConfig(),
                  projection_config: ProjectionConfig = ProjectionConfig(),
@@ -43,10 +42,10 @@ class HebbianTransformer(nn.Module):
 
         # --- Parameter Normalization ---
         if isinstance(hebbian_config, HebbianAttentionConfig):
-            hebbian_config = [hebbian_config] * len(n_neurons_per_sess)
+            hebbian_config = [hebbian_config] * len(n_neurons_per_session)
 
-        self.session_ids = [str(sess_id) for sess_id in id_per_sess] # Ensure string keys for ModuleDict
-        self.n_neurons_map = {sess_id: n for sess_id, n in zip(self.session_ids, n_neurons_per_sess)}
+        self.session_ids = [str(session_id) for session_id in id_per_session] # Ensure string keys for ModuleDict
+        self.n_neurons_map = {session_id: n for session_id, n in zip(self.session_ids, n_neurons_per_session)}
         
         self.embed_dim = embed_dim
         self.latent_dim = latent_dim
@@ -57,11 +56,11 @@ class HebbianTransformer(nn.Module):
         # --- Layer Construction ---
         # 1. Hebbian Attention Blocks (Session-specific)
         self.hebbian_blocks = nn.ModuleDict({
-            sess_id: hebbian_config[i].block_class(
-                n_neurons=self.n_neurons_map[sess_id],
+            session_id: hebbian_config[i].block_class(
+                n_neurons=self.n_neurons_map[session_id],
                 embed_dim=embed_dim,
                 **hebbian_config[i].params
-            ) for i, sess_id in enumerate(self.session_ids)
+            ) for i, session_id in enumerate(self.session_ids)
         })
 
         # 2. Conventional Attention Blocks (Shared)
@@ -97,14 +96,14 @@ class HebbianTransformer(nn.Module):
                 raise ValueError("To share projection heads, all sessions must have the same number of neurons.")
             
             shared_head = self._create_projection_head(n_neurons=neurons_list[0])
-            return nn.ModuleDict({sess_id: shared_head for sess_id in self.session_ids})
+            return nn.ModuleDict({session_id: shared_head for session_id in self.session_ids})
         else:
             return nn.ModuleDict({
-                sess_id: self._create_projection_head(n_neurons=n)
-                for sess_id, n in self.n_neurons_map.items()
+                session_id: self._create_projection_head(n_neurons=n)
+                for session_id, n in self.n_neurons_map.items()
             })
 
-    def add_neural_block(self, n_neurons: int, sess_id: Union[str, int],
+    def add_neural_block(self, n_neurons: int, session_id: Union[str, int],
                          hebbian_config: Optional[HebbianAttentionConfig] = None):
         """
         Dynamically adds a new Hebbian attention block for a new session.
@@ -115,12 +114,12 @@ class HebbianTransformer(nn.Module):
 
         Args:
             n_neurons (int): The number of input neurons for the new session.
-            sess_id (Union[str, int]): A unique identifier for the new session.
+            session_id (Union[str, int]): A unique identifier for the new session.
             hebbian_config (HebbianConfig): Configuration parameters for the new Hebbian block.
 
         """
 
-        sid = str(sess_id)
+        sid = str(session_id)
         if sid in self.session_ids:
             raise ValueError(f"Session ID '{sid}' already exists. Please choose a unique ID.")
         
@@ -154,30 +153,30 @@ class HebbianTransformer(nn.Module):
         self.session_ids.append(sid)
         self.n_neurons_map[sid] = n_neurons
 
-    def forward(self, x: torch.Tensor, sess_id: Union[str, int]) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor, session_id: Union[str, int]) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Forward pass through the HebbianTransformerEncoder.
 
         Args:
             x (torch.Tensor): Input tensor. Shape: (batch, n_neurons) or (batch, seq_len, n_neurons).
-            sess_id (Union[str, int]): The identifier for the session being processed.
+            session_id (Union[str, int]): The identifier for the session being processed.
 
         Returns:
             A tuple containing the mean (mu) and log-variance (logvar) of the latent distribution.
         """
 
-        sess_id = str(sess_id)
-        if sess_id not in self.hebbian_blocks:
-            raise ValueError(f"Session ID '{sess_id}' not found.")
+        session_id = str(session_id)
+        if session_id not in self.hebbian_blocks:
+            raise ValueError(f"Session ID '{session_id}' not found.")
 
         # 1. Hebbian Attention
-        h = self.hebbian_blocks[sess_id](x) # Expected output: (batch, seq_len, embed_dim)
+        h = self.hebbian_blocks[session_id](x) # Expected output: (batch, seq_len, embed_dim)
 
         # 2. Conventional Attention
         h = self.conventional_blocks(h)
 
         # 3. Projection Head
-        projection = self.projection_heads[sess_id]
+        projection = self.projection_heads[session_id]
         z = projection['head'](h)
         mu = projection['mu'](z)
         logvar = projection['logvar'](z)
@@ -211,9 +210,9 @@ class HebbianTransformer(nn.Module):
         No Returns.
         """
 
-        for sess_id in self.session_ids:
-            sess_id = str(sess_id)
-            self.hebbian_blocks[sess_id].detach_()
+        for session_id in self.session_ids:
+            session_id = str(session_id)
+            self.hebbian_blocks[session_id].detach_()
 
     def zero_(self):
         """
@@ -224,6 +223,6 @@ class HebbianTransformer(nn.Module):
         No Returns.
         """
 
-        for sess_id in self.session_ids:
-            sess_id = str(sess_id)
-            self.hebbian_blocks[sess_id].zero_()
+        for session_id in self.session_ids:
+            session_id = str(session_id)
+            self.hebbian_blocks[session_id].zero_()

@@ -4,7 +4,7 @@ import pickle
 import numpy as np
 from allensdk.brain_observatory.ecephys.ecephys_project_cache import EcephysProjectCache
 
-from sparks.data.allen.preprocess.utils import preprocess_gratings
+from sparks.data.allen.preprocess.gratings import preprocess_gratings
 
 output_dir = os.path.join("/nemo/lab/iacarusof/home/shared/Nicolas//datasets/allen_visual/")
 manifest_path = os.path.join(output_dir, "manifest.json")

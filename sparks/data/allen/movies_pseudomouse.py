@@ -4,25 +4,56 @@ from typing import List
 import numpy as np
 import torch
 
-from sparks.data.allen.utils import AllenMoviesNpxDataset, AllenMoviesCaDataset
-from sparks.data.allen.utils import (make_spikes_dict, sample_correct_unit_ids,
-                                     load_preprocessed_spikes, get_train_test_indices)
+from sparks.data.allen.movies import AllenMoviesNpxDataset, AllenMoviesCaDataset
+from sparks.data.allen.utils import make_spikes_dict, load_preprocessed_spikes, get_train_test_indices
 
 
-def make_npx_dataset(data_dir: os.path,
-                     n_neurons: int = 50,
-                     neuron_types: List = ['VISp'],
-                     mode='prediction',
-                     min_snr: float = 1.5,
-                     dt: float = 0.01,
-                     ds: int = 1,
-                     block: str = 'first',
-                     num_workers: int = 0,
-                     batch_size: int = 1,
-                     correct_units_ids: np.ndarray = None,
-                     seed: int = None):
+def make_npx_dataset_and_dl(spikes: dict,
+                            indices: np.ndarray,
+                            correct_units_ids: np.ndarray,
+                            dt: float = 0.01,
+                            num_workers: int = 0,
+                            batch_size: int = 1,
+                            shuffle_dl: bool = True):
+    """"
+    Create dataset and dataloader for given spikes and indices
+
+    Parameters
+    ----------
+    spikes : dict
+        dictionary of spike times per unit id
+    indices : np.ndarray
+        indices of the trials to be included in the dataset
+    correct_units_ids : np.ndarray
+        ids of the units to be included in the dataset
+    dt : float, optional
+        time step, defaults to 0.01
+    num_workers : int, optional
+        number of worker threads for loading the data, defaults to 0
+    batch_size : int, optional
+        number of samples per batch, defaults to 1
     """
-    Constructs a dataset for neural experiments.
+
+    spikes_dict = make_spikes_dict(spikes, indices, correct_units_ids)
+    dataset = AllenMoviesNpxDataset(spikes_dict, correct_units_ids, dt)
+    dl = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=shuffle_dl, num_workers=num_workers)
+
+    return dataset, dl
+
+
+def make_npx_dataset_and_dls(data_dir: os.path,
+                             n_neurons: int = 50,
+                             neuron_types: List = ['VISp'],
+                             mode='prediction',
+                             min_snr: float = 1.5,
+                             dt: float = 0.01,
+                             block: str = 'first',
+                             num_workers: int = 0,
+                             batch_size: int = 1,
+                             correct_units_ids: np.ndarray = None,
+                             seed: int = None):
+    """
+    Loads train/test datasets and creates dataloaders for neuropixels data.
 
     Parameters
     ----------
@@ -38,10 +69,8 @@ def make_npx_dataset(data_dir: os.path,
         Minimum SNR for selecting a neuron.
     dt : float, optional
         Time step.
-    ds : int, optional
-        Downsampling factor.
     block : str, optional
-        Specifies which part of the movie to take ('first' or 'second'), defaults to 'first'.
+        Specifies which block to train on ('first', 'second', 'across' or 'both'), defaults to 'first'.
     num_workers : int, optional
         Number of worker threads for loading the data.
     batch_size : int, optional
@@ -68,35 +97,22 @@ def make_npx_dataset(data_dir: os.path,
                                                              n_neurons=n_neurons, seed=seed,
                                                              correct_units_ids=correct_units_ids)
 
-    if mode == 'reconstruction':
-        from allensdk.brain_observatory.ecephys.ecephys_project_cache import EcephysProjectCache
-        manifest_path = os.path.join(data_dir, "manifest.json")
-        cache = EcephysProjectCache.from_warehouse(manifest=manifest_path)
-    else:
-        cache = None
-
     train_indices, test_indices = get_train_test_indices(block, mode)
+    train_dataset, train_dl = make_npx_dataset_and_dl(all_spikes, train_indices, correct_units_ids,
+                                                      dt, num_workers, batch_size, shuffle_dl=True)
 
-    train_dataset = AllenMoviesNpxDataset(make_spikes_dict(all_spikes, train_indices, correct_units_ids),
-                                          correct_units_ids, dt, cache=cache, ds=ds, mode=mode)
-    train_dl = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
-
-    test_dataset = AllenMoviesNpxDataset(make_spikes_dict(all_spikes, test_indices, correct_units_ids),
-                                         correct_units_ids, dt, cache=cache, ds=ds, mode=mode)
-    test_dl = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+    test_dataset, test_dl = make_npx_dataset_and_dl(all_spikes, test_indices, correct_units_ids,
+                                                    dt, num_workers, batch_size, shuffle_dl=False)
 
     return train_dataset, test_dataset, train_dl, test_dl
 
 
-def make_ca_dataset(n_neurons: int = 50,
-                    num_workers: int = 0,
-                    batch_size: int = 1,
-                    mode='prediction',
-                    dt: float = 0.01,
-                    ds: int = 1,
-                    seed: int = None):
+def make_ca_dataset_and_dls(n_neurons: int = 50,
+                            num_workers: int = 0,
+                            batch_size: int = 1,
+                            seed: int = None):
     """
-    Constructs a dataset for calcium imaging experiments.
+    Loads train/test datasets and creates dataloaders for calcium data.
 
     Parameters
     ----------
@@ -106,12 +122,6 @@ def make_ca_dataset(n_neurons: int = 50,
         Number of worker threads for loading the data, defaults to 0.
     batch_size : int, optional
         Number of samples per batch, defaults to 1.
-    mode : str, optional
-        Mode of operation, either 'prediction' or 'reconstruction', defaults to 'prediction'.
-    dt : float, optional
-        Time interval between samples (in seconds), defaults to 0.01.
-    ds : int, optional
-        Downsampling factor, defaults to 1.
     seed : int, optional
         Seed for the random number generator, defaults to None.
 
@@ -127,32 +137,31 @@ def make_ca_dataset(n_neurons: int = 50,
         DataLoader for testing data.
     """
 
-    train_dataset = AllenMoviesCaDataset(n_neurons, seed, train=True, dt=dt, ds=ds, mode=mode)
+    train_dataset = AllenMoviesCaDataset(n_neurons, seed, train=True)
     train_dl = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size,
                                            shuffle=True, num_workers=num_workers)
 
-    test_dataset = AllenMoviesCaDataset(n_neurons, seed, train=False, dt=dt, ds=ds, mode=mode)
+    test_dataset = AllenMoviesCaDataset(n_neurons, seed, train=False)
     test_dl = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size,
                                           shuffle=False, num_workers=num_workers)
 
     return train_dataset, test_dataset, train_dl, test_dl
 
 
-def make_pseudomouse_allen_movies_dataset(data_dir: os.path = '/',
-                                          n_neurons: int = 50,
-                                          neuron_types: List = ['VISp'],
-                                          mode='prediction',
-                                          block: str = 'within',
-                                          min_snr: float = 1.5,
-                                          dt: float = 0.01,
-                                          ds: int = 1,
-                                          num_workers: int = 0,
-                                          batch_size: int = 1,
-                                          correct_units_ids: np.ndarray = None,
-                                          data_type: str = 'npx',
-                                          seed: int = None):
+def make_pseudomouse_allen_movies_dataset_and_dls(data_dir: os.path = '/',
+                                                  n_neurons: int = 50,
+                                                  neuron_types: List = ['VISp'],
+                                                  mode='prediction',
+                                                  block: str = 'within',
+                                                  min_snr: float = 1.5,
+                                                  dt: float = 0.01,
+                                                  num_workers: int = 0,
+                                                  batch_size: int = 1,
+                                                  correct_units_ids: np.ndarray = None,
+                                                  data_type: str = 'npx',
+                                                  seed: int = None):
     """
-    Creates a pseudomouse dataset based on Allen's movies.
+    Loads train/test datasets and creates dataloaders from the Allen movie dataset.
 
     Parameters
     ----------
@@ -170,8 +179,6 @@ def make_pseudomouse_allen_movies_dataset(data_dir: os.path = '/',
         Minimum SNR for selecting a neuron (only used when data_type is 'npx'), defaults to 1.5.
     dt : float, optional
         Time interval between samples (in seconds), defaults to 0.01.
-    ds : int, optional
-        Downsampling factor, defaults to 1.
     num_workers : int, optional
         Number of worker threads for loading the data, defaults to 0.
     batch_size : int, optional
@@ -190,8 +197,7 @@ def make_pseudomouse_allen_movies_dataset(data_dir: os.path = '/',
     """
 
     if data_type == 'npx':
-        return make_npx_dataset(data_dir, n_neurons, neuron_types, mode, min_snr, dt, ds,
-                                block, num_workers, batch_size, correct_units_ids, seed)
+        return make_npx_dataset_and_dls(data_dir, n_neurons, neuron_types, mode, min_snr, dt,
+                                        block, num_workers, batch_size, correct_units_ids, seed)
     elif data_type == 'ca':
-        return make_ca_dataset(n_neurons, num_workers, batch_size, mode=mode,
-                               dt=dt, ds=ds, seed=seed)
+        return make_ca_dataset_and_dls(n_neurons, num_workers, batch_size, seed=seed)
