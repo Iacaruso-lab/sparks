@@ -108,7 +108,7 @@ class SPARKS(torch.nn.Module):
         decoder_outputs = self.decoder(encoder_outputs[..., -self.tau_p:], session_id)
 
         return encoder_outputs, decoder_outputs, mu, logvar
-        
+
 
     def generate(self, z: torch.Tensor, session_id: Union[str, int]) -> torch.Tensor:
         """

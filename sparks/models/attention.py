@@ -70,6 +70,9 @@ class BaseHebbianAttentionLayer(nn.Module):
                                         * (self.post_trace * (pre_spikes != 0)).view(spikes.shape[0],self.n_neurons, -1),
                                      min=self.min_attn_value, max=self.max_attn_value)
 
+        if torch.isnan(self.attention).any():
+            raise ValueError("NaN values detected in attention coefficients.")
+
         return self.v_proj(self.attention)
 
     def get_pre_post_spikes(self, spikes: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
