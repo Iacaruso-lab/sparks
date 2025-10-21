@@ -69,7 +69,7 @@ class BaseHebbianAttentionLayer(nn.Module):
                                         - self.attention
                                         * (self.post_trace * (pre_spikes != 0)).view(spikes.shape[0],self.n_neurons, -1),
                                      min=self.min_attn_value, max=self.max_attn_value)
-
+        
         if torch.isnan(self.attention).any():
             raise ValueError("NaN values detected in attention coefficients.")
 
@@ -222,17 +222,16 @@ class EphysAttentionLayer(DenseHebbianAttentionLayer):
         self.pre_trace = 0.
         self.post_trace = 0.
 
-        self.latent_pre_weight = Parameter(torch.ones(1, self.n_neurons, self.n_neurons) * np.log(self.w_start))
-        self.latent_post_weight = Parameter(torch.ones(1, self.n_neurons, self.n_neurons) * np.log(self.w_start
-                                                                                                   * self.alpha))
-
-        self.latent_pre_tau_s = Parameter(torch.ones(1, self.n_neurons, self.n_neurons) * np.log(self.tau_s))
-        self.latent_post_tau_s = Parameter(torch.ones(1, self.n_neurons, self.n_neurons) * np.log(self.tau_s))
+        self.latent_pre_weight = Parameter(torch.zeros(1, self.n_neurons, self.n_neurons))
+        self.latent_post_weight = Parameter(torch.zeros(1, self.n_neurons, self.n_neurons))
 
         torch.nn.init.normal_(self.latent_pre_weight, mean=np.log(self.w_start), 
                               std=np.sqrt(1 / self.n_neurons))
         torch.nn.init.normal_(self.latent_post_weight, mean=np.log(self.w_start * self.alpha), 
                               std=np.sqrt((1 / self.n_neurons)))
+
+        self.latent_pre_tau_s = Parameter(torch.ones(1, self.n_neurons, self.n_neurons) * np.log(self.tau_s))
+        self.latent_post_tau_s = Parameter(torch.ones(1, self.n_neurons, self.n_neurons) * np.log(self.tau_s))
 
     def pre_trace_update(self, pre_spikes: torch.Tensor) -> None:
         """
@@ -317,8 +316,33 @@ class CalciumAttentionLayer(DenseHebbianAttentionLayer):
                          embed_dim=embed_dim,
                          min_attn_value=min_attn_value,
                          max_attn_value=max_attn_value)
+        
+    def forward(self, spikes: torch.Tensor) -> torch.Tensor:
+        """
+        Perform the forward pass for the Calcium Hebbian Attention layer.
 
+        The forward pass involves calculation of the STDP coefficients.
+        The calculated attention factor can be likened to the K^T.Q product in conventional dot-product attention.
 
+        Args:
+            spikes (torch.Tensor): Tensor representation of the spikes from the neurons.
+                                    It should be of shape [n_total_neurons, n_timesteps].
+
+        Returns:
+            torch.Tensor: The attention coefficients after applying the attention operation.
+            The size of the output tensor is [batch_size, len(n_neurons), embed_dim].
+        """
+
+        pre_spikes, post_spikes = self.get_pre_post_spikes(spikes)
+        self.attention = torch.clip(self.attention + pre_spikes - post_spikes,
+                                    min=self.min_attn_value,
+                                    max=self.max_attn_value)
+
+        if torch.isnan(self.attention).any():
+            raise ValueError("NaN values detected in attention coefficients.")
+
+        return self.v_proj(self.attention) / self.n_neurons
+    
     def pre_trace_update(self, pre_spikes: torch.Tensor) -> None:
         """
         Update the pre-synaptic eligibility traces.
