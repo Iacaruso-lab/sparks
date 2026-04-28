@@ -58,7 +58,6 @@ class BaseHebbianAttentionLayer(nn.Module):
             torch.Tensor: The attention coefficients after applying the attention operation.
             The size of the output tensor is [batch_size, len(n_neurons), embed_dim].
         """
-
         pre_spikes, post_spikes = self.get_pre_post_spikes(spikes)
         self.pre_trace_update(pre_spikes)
         self.post_trace_update(post_spikes)
@@ -293,6 +292,8 @@ class CalciumAttentionLayer(DenseHebbianAttentionLayer):
                  embed_dim: int,
                  min_attn_value: float = -0.5,
                  max_attn_value: float = 1.5,
+                 tau_s: float = 1.0,
+                 dt: float = 0.001,
                  **kwargs):
 
         """
@@ -315,8 +316,16 @@ class CalciumAttentionLayer(DenseHebbianAttentionLayer):
         super().__init__(n_neurons=n_neurons,
                          embed_dim=embed_dim,
                          min_attn_value=min_attn_value,
-                         max_attn_value=max_attn_value)
-        
+                         max_attn_value=max_attn_value,
+                         tau_s=tau_s,
+                         dt=dt)
+
+        if self.tau_s > 0:
+            self.latent_tau_s = Parameter(torch.ones(1, self.n_neurons, self.n_neurons) * np.log(self.tau_s))
+        else:
+            self.latent_tau_s = torch.tensor(1.0)
+            self.dt = 0
+
     def forward(self, spikes: torch.Tensor) -> torch.Tensor:
         """
         Perform the forward pass for the Calcium Hebbian Attention layer.
@@ -333,8 +342,10 @@ class CalciumAttentionLayer(DenseHebbianAttentionLayer):
             The size of the output tensor is [batch_size, len(n_neurons), embed_dim].
         """
 
+
         pre_spikes, post_spikes = self.get_pre_post_spikes(spikes)
-        self.attention = torch.clip(self.attention + pre_spikes - post_spikes,
+        self.attention = torch.clip(self.attention * torch.exp(- self.dt / self.latent_tau_s.exp())
+                                    + pre_spikes - post_spikes,
                                     min=self.min_attn_value,
                                     max=self.max_attn_value)
 
@@ -342,7 +353,7 @@ class CalciumAttentionLayer(DenseHebbianAttentionLayer):
             raise ValueError("NaN values detected in attention coefficients.")
 
         return self.v_proj(self.attention) / self.n_neurons
-    
+
     def pre_trace_update(self, pre_spikes: torch.Tensor) -> None:
         """
         Update the pre-synaptic eligibility traces.
