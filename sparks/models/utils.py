@@ -1,21 +1,107 @@
 import math
 
 import torch
+import torch.nn.functional as F
+from torch import nn
 
 
 class FeedForward(torch.nn.Module):
     def __init__(self, dim):
         super().__init__()
         self.net = torch.nn.Sequential(
-            torch.nn.RMSNorm(dim),
             torch.nn.Linear(dim, 2 * dim, bias=False),
             torch.nn.GLU(),
-            torch.nn.Linear(dim, 2 * dim, bias=False),
-            torch.nn.GLU()
         )
 
     def forward(self, x):
         return self.net(x)
+
+# class FeedForward(torch.nn.Module):
+#     def __init__(self, dim):
+#         super().__init__()
+#         self.net = torch.nn.Sequential(
+#             torch.nn.Linear(dim, 2 * dim, bias=False),
+#             torch.nn.GLU(),
+#             torch.nn.Linear(dim, 2 * dim, bias=False),
+#             torch.nn.GLU()
+#         )
+
+#     def forward(self, x):
+#         return self.net(x)
+
+# class FeedForward(nn.Module):
+#     def __init__(self, dim: int, hidden_dim: int = None):
+#         super().__init__()
+        
+#         if hidden_dim is None:
+#             hidden_dim = int(2 * (4 * dim) / 3)
+
+#         self.w12 = nn.Linear(dim, 2 * hidden_dim, bias=False)
+#         self.w3 = nn.Linear(hidden_dim, dim, bias=False)
+
+#     def forward(self, x: torch.Tensor) -> torch.Tensor:
+#         projected = self.w12(x)
+        
+#         gate, value = projected.chunk(2, dim=-1)
+        
+#         activated_gate = F.gelu(gate, approximate='tanh')
+        
+#         return self.w3(activated_gate * value)
+    
+
+# class FeedForward(nn.Module):
+#     def __init__(self, dim: int, d_conv: int = 4, expand: int = 2):
+#         super().__init__()
+#         self.dim = dim
+#         self.inner_dim = int(expand * dim)
+        
+#         self.in_proj = nn.Linear(dim, self.inner_dim * 2, bias=False)
+        
+#         self.conv1d = nn.Conv1d(in_channels=self.inner_dim, out_channels=self.inner_dim,
+#                                 kernel_size=d_conv, groups=self.inner_dim, padding=d_conv - 1, bias=True)
+        
+#         self.out_proj = nn.Linear(self.inner_dim, dim, bias=False)
+
+#     def forward(self, x: torch.Tensor) -> torch.Tensor:
+#         # x shape: [batch, seq_len, dim]
+#         L = x.shape[1]
+        
+#         # Combined projection and split
+#         # projected shape: [batch, seq_len, 2 * inner_dim]
+#         projected = self.in_proj(x)
+#         x_branch, res_branch = projected.chunk(2, dim=-1)
+        
+#         # --- Branch 1: Convolution + Activation ---
+#         # Conv1d expects [batch, channels, length]
+#         x_branch = x_branch.transpose(1, 2) 
+#         x_branch = self.conv1d(x_branch)[:, :, :L] # Causal-ish crop
+#         x_branch = x_branch.transpose(1, 2)
+#         x_branch = F.silu(x_branch)
+        
+#         # --- Branch 2: Gating ---
+#         gate = F.silu(res_branch)
+        
+#         # Combine branches
+#         combined = x_branch * gate
+        
+#         return self.out_proj(combined)
+
+# class FeedForward(nn.Module):
+#     def __init__(self, dim: int, hidden_dim: int = None):
+#         super().__init__()
+        
+#         if hidden_dim is None:
+#             # Standard 2/3 scaling
+#             hidden_dim = int(2 * (4 * dim) / 3)
+
+#         self.w12 = nn.Linear(dim, 2 * hidden_dim, bias=False)
+#         self.w3 = nn.Linear(hidden_dim, dim, bias=False)
+
+#     def forward(self, x: torch.Tensor) -> torch.Tensor:
+#         up_proj = self.w12(x)
+#         gate, value = up_proj.chunk(2, dim=-1)
+
+#         return self.w3(F.silu(gate) * value)
 
 
 def scaled_dot_product(q, k, v):
@@ -68,84 +154,3 @@ class MultiheadAttention(torch.nn.Module):
         o = self.o_proj(values)
 
         return o
-
-
-class AttentionBlock(torch.nn.Module):
-    def __init__(self, embed_dim, n_heads=1):
-        super(AttentionBlock, self).__init__()
-        self.attention = MultiheadAttention(embed_dim, n_heads)
-        self.ff = FeedForward(embed_dim)
-        self.norm = torch.nn.LayerNorm(embed_dim)
-
-    def forward(self, x):
-        # x shape: [batch_size, n_inputs, input_dim]
-        x = self.norm(x)
-        x = self.attention(x) + x
-        x = self.ff(x) + x
-
-        return x  # [batch_size, n_inputs, input_dim]
-
-    def zero_(self):
-        """
-        For compatibility
-        :return:
-        """
-        return
-
-    def detach_(self):
-        """
-        For compatibility
-        :return:
-        """
-        return
-
-class TransformerEncoder(torch.nn.Module):
-    """
-    Linear encoder with attention layer
-    """
-
-    def __init__(self, n_inputs, embed_dim, latent_dim, n_layers=1, n_heads=1):
-        """
-        :param n_inputs: number of input neurons
-        :param hidden_dims:
-        :param latent_dim:
-        :param tau_s: time constant for the attention
-        :param device: device to use
-        """
-
-        super(TransformerEncoder, self).__init__()
-
-        self.layers = torch.nn.ModuleList([torch.nn.Linear(n_inputs, embed_dim)])
-        for _ in range(n_layers):
-            self.layers.append(AttentionBlock(embed_dim, n_heads))
-
-        self.fc_mu = torch.nn.Linear(embed_dim, latent_dim)
-        self.fc_var = torch.nn.Linear(embed_dim, latent_dim)
-
-    def forward(self, x, id=None):
-        """
-        Forward pass of the encoder
-        :param spikes: spikes of the neurons [batch_size, n_neurons, n_timesteps]
-        :return: encoded signal the output neurons [batch_size, latent_dim]
-        """
-
-        x = x.unsqueeze(1)
-        for layer in self.layers:
-            x = layer(x)
-
-        mu = self.fc_mu(x.flatten(1))
-        logvar = self.fc_var(x.flatten(1))
-
-        return mu, logvar
-
-    def reparametrize(self, mu, logvar):
-        std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)
-
-        return eps * std + mu
-
-    def detach_(self):
-        self.layers[1].detach_()
-
-    def zero_(self):
-        self.layers[1].zero_()

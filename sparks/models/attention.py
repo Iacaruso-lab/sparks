@@ -14,7 +14,7 @@ class BaseHebbianAttentionLayer(nn.Module):
             embed_dim (int): The embedding dimension.
             tau_s (float): The time constant for STDP.
             dt (float): The time-step for STDP coefficients.
-            w_start (float): The initial weight for the attention mechanism.
+            w_plus (float): The initial weight for the attention mechanism.
             alpha (float): The scaling factor for the post-synaptic weight.
             min_attn_value (float): The minimum value for attention coefficients.
             max_attn_value (float): The maximum value for attention coefficients. 
@@ -25,10 +25,8 @@ class BaseHebbianAttentionLayer(nn.Module):
                  embed_dim: int,                  
                  tau_s: float = 1.0,
                  dt: float = 0.001,
-                 w_start: float = 1.0,
-                 alpha: float = 1.0,
-                 min_attn_value: float = -0.5,
-                 max_attn_value: float = 1.5,
+                 w_plus: float = 0.001,
+                 alpha: float = 1.1,
                  **kwargs):
 
         super().__init__()
@@ -36,10 +34,8 @@ class BaseHebbianAttentionLayer(nn.Module):
         self.embed_dim = embed_dim
         self.tau_s = tau_s
         self.dt = dt
-        self.w_start = w_start
+        self.w_plus = w_plus
         self.alpha = alpha
-        self.min_attn_value = min_attn_value
-        self.max_attn_value = max_attn_value
 
         self.attention = 0.
 
@@ -59,16 +55,16 @@ class BaseHebbianAttentionLayer(nn.Module):
             The size of the output tensor is [batch_size, len(n_neurons), embed_dim].
         """
         pre_spikes, post_spikes = self.get_pre_post_spikes(spikes)
-        self.pre_trace_update(pre_spikes)
-        self.post_trace_update(post_spikes)
+        self.pre_trace_decay(pre_spikes)
+        self.post_trace_decay(post_spikes)
 
-        self.attention = torch.clamp(self.attention
-                                        + (1 - self.attention)
-                                        * (self.pre_trace * (post_spikes != 0)).view(spikes.shape[0],self.n_neurons,-1)
-                                        - self.attention
-                                        * (self.post_trace * (pre_spikes != 0)).view(spikes.shape[0],self.n_neurons, -1),
-                                     min=self.min_attn_value, max=self.max_attn_value)
+        self.attention = (self.attention 
+                          + (1 - self.attention) * (self.pre_trace * (post_spikes != 0)).view(spikes.shape[0],self.n_neurons,-1)
+                          - self.attention * (self.post_trace * (pre_spikes != 0)).view(spikes.shape[0],self.n_neurons, -1))
         
+        self.pre_trace = self.pre_trace + pre_spikes * self.latent_pre_weight.exp()
+        self.post_trace = self.post_trace + post_spikes * self.latent_post_weight.exp()
+
         if torch.isnan(self.attention).any():
             raise ValueError("NaN values detected in attention coefficients.")
 
@@ -86,7 +82,7 @@ class BaseHebbianAttentionLayer(nn.Module):
         """
         raise NotImplementedError("This method should be implemented in subclasses.")
 
-    def pre_trace_update(self, pre_spikes: torch.Tensor) -> None:
+    def pre_trace_decay(self, pre_spikes: torch.Tensor) -> None:
         """
         Update the pre-synaptic eligibility traces.
 
@@ -98,7 +94,7 @@ class BaseHebbianAttentionLayer(nn.Module):
         """
         raise NotImplementedError("This method should be implemented in subclasses.")
 
-    def post_trace_update(self, post_spikes: torch.Tensor) -> None:
+    def post_trace_decay(self, post_spikes: torch.Tensor) -> None:
         """
         Update the post-synaptic eligibility traces.
 
@@ -125,10 +121,8 @@ class DenseHebbianAttentionLayer(BaseHebbianAttentionLayer):
             embed_dim (int): The embedding dimension.
             tau_s (float): The time constant for STDP.
             dt (float): The time-step for STDP coefficients.
-            w_start (float): The initial weight for the attention mechanism.
+            w_plus (float): The initial weight for the attention mechanism.
             alpha (float): The scaling factor for the post-synaptic weight.
-            min_attn_value (float): The minimum value for attention coefficients.
-            max_attn_value (float): The maximum value for attention coefficients. 
     
     """
 
@@ -136,20 +130,16 @@ class DenseHebbianAttentionLayer(BaseHebbianAttentionLayer):
                  embed_dim: int,                  
                  tau_s: float = 1.0,
                  dt: float = 0.001,
-                 w_start: float = 1.0,
-                 alpha: float = 1.0,
-                 min_attn_value: float = -0.5,
-                 max_attn_value: float = 1.5,
+                 w_plus: float = 0.001,
+                 alpha: float = 1.1,
                  **kwargs):
         
         super().__init__(n_neurons=n_neurons,
                          embed_dim=embed_dim,
                          tau_s=tau_s,
                          dt=dt,
-                         w_start=w_start,
-                         alpha=alpha,
-                         min_attn_value=min_attn_value,
-                         max_attn_value=max_attn_value)
+                         w_plus=w_plus,
+                         alpha=alpha)
 
         self.v_proj = torch.nn.Linear(self.n_neurons, self.embed_dim)
 
@@ -174,10 +164,8 @@ class EphysAttentionLayer(DenseHebbianAttentionLayer):
                  embed_dim: int,                 
                  tau_s: float = 1.0,
                  dt: float = 0.001,
-                 w_start: float = 1.0,
-                 alpha: float = 1.0,
-                 min_attn_value: float = -0.5,
-                 max_attn_value: float = 1.5,
+                 w_plus: float = 0.001,
+                 alpha: float = 1.1,
                  **kwargs):
 
         """
@@ -188,10 +176,8 @@ class EphysAttentionLayer(DenseHebbianAttentionLayer):
             embed_dim (int): The embedding dimension.
             tau_s (float): The time constant for STDP.
             dt (float): The time-step for STDP coefficients.
-            w_start (float): The initial weight for the attention mechanism.
+            w_plus (float): The initial weight for the attention mechanism.
             alpha (float): The scaling factor for the post-synaptic weight.
-            min_attn_value (float): The minimum value for attention coefficients.
-            max_attn_value (float): The maximum value for attention coefficients.
 
         Attributes:
             n_neurons (int): Total number of neurons.
@@ -213,26 +199,20 @@ class EphysAttentionLayer(DenseHebbianAttentionLayer):
                          embed_dim=embed_dim,
                          tau_s=tau_s,
                          dt=dt,
-                         w_start=w_start,
+                         w_plus=w_plus,
                          alpha=alpha,
-                         min_attn_value=min_attn_value,
-                         max_attn_value=max_attn_value)
+                         **kwargs)
 
         self.pre_trace = 0.
         self.post_trace = 0.
 
-        self.latent_pre_weight = Parameter(torch.zeros(1, self.n_neurons, self.n_neurons))
-        self.latent_post_weight = Parameter(torch.zeros(1, self.n_neurons, self.n_neurons))
+        self.latent_pre_weight = Parameter(torch.tensor(np.log(self.w_plus)).type(torch.float32))
+        self.latent_post_weight = Parameter(torch.tensor(np.log(self.w_plus * self.alpha)).type(torch.float32))
 
-        torch.nn.init.normal_(self.latent_pre_weight, mean=np.log(self.w_start), 
-                              std=np.sqrt(1 / self.n_neurons))
-        torch.nn.init.normal_(self.latent_post_weight, mean=np.log(self.w_start * self.alpha), 
-                              std=np.sqrt((1 / self.n_neurons)))
+        self.latent_pre_tau_s = Parameter(torch.tensor(np.log(self.tau_s)).type(torch.float32))
+        self.latent_post_tau_s = Parameter(torch.tensor(np.log(self.tau_s)).type(torch.float32))
 
-        self.latent_pre_tau_s = Parameter(torch.ones(1, self.n_neurons, self.n_neurons) * np.log(self.tau_s))
-        self.latent_post_tau_s = Parameter(torch.ones(1, self.n_neurons, self.n_neurons) * np.log(self.tau_s))
-
-    def pre_trace_update(self, pre_spikes: torch.Tensor) -> None:
+    def pre_trace_decay(self, pre_spikes: torch.Tensor) -> None:
         """
         Update the pre-synaptic eligibility traces.
 
@@ -242,10 +222,13 @@ class EphysAttentionLayer(DenseHebbianAttentionLayer):
         Returns:
             None
         """
-        self.pre_trace = (self.pre_trace * torch.exp(- self.dt / self.latent_pre_tau_s.exp())
-                          + (pre_spikes * self.latent_pre_weight.exp()) * self.dt)
 
-    def post_trace_update(self, post_spikes: torch.Tensor) -> None:
+        if isinstance(self.pre_trace, float):
+            self.pre_trace = torch.zeros_like(pre_spikes)
+        else:
+            self.pre_trace = self.pre_trace * torch.exp(- self.dt / self.latent_pre_tau_s.exp())
+
+    def post_trace_decay(self, post_spikes: torch.Tensor) -> None:
         """
         Update the post-synaptic eligibility traces.
 
@@ -255,8 +238,10 @@ class EphysAttentionLayer(DenseHebbianAttentionLayer):
         Returns:
             None
         """
-        self.post_trace = (self.post_trace * torch.exp(- self.dt / self.latent_post_tau_s.exp())
-                           + (post_spikes * self.latent_post_weight.exp() * self.dt))
+        if isinstance(self.post_trace, float):
+            self.post_trace = torch.zeros_like(post_spikes)
+        else:
+            self.post_trace = self.post_trace * torch.exp(- self.dt / self.latent_post_tau_s.exp())
 
     def detach_(self):
         """
@@ -281,8 +266,8 @@ class EphysAttentionLayer(DenseHebbianAttentionLayer):
             self.attention.detach_()
 
     def zero_(self):
-        self.pre_trace = 0
-        self.post_trace = 0
+        self.pre_trace = 0.
+        self.post_trace = 0.
         self.attention = 0.
 
 
@@ -320,6 +305,9 @@ class CalciumAttentionLayer(DenseHebbianAttentionLayer):
                          tau_s=tau_s,
                          dt=dt)
 
+        self.min_attn_value = min_attn_value
+        self.max_attn_value = max_attn_value
+
         if self.tau_s > 0:
             self.latent_tau_s = Parameter(torch.ones(1, self.n_neurons, self.n_neurons) * np.log(self.tau_s))
         else:
@@ -352,28 +340,4 @@ class CalciumAttentionLayer(DenseHebbianAttentionLayer):
         if torch.isnan(self.attention).any():
             raise ValueError("NaN values detected in attention coefficients.")
 
-        return self.v_proj(self.attention) / self.n_neurons
-
-    def pre_trace_update(self, pre_spikes: torch.Tensor) -> None:
-        """
-        Update the pre-synaptic eligibility traces.
-
-        Args:
-            pre_spikes (torch.Tensor): Tensor of pre-synaptic neuron spike activity.
-
-        Returns:
-            None
-        """
-        self.pre_trace = pre_spikes
-
-    def post_trace_update(self, post_spikes: torch.Tensor) -> None:
-        """
-        Update the post-synaptic eligibility traces.
-
-        Args:
-            post_spikes (torch.Tensor): Tensor of post-synaptic neuron spike activity.
-
-        Returns:
-            None
-        """
-        self.post_trace = post_spikes
+        return self.v_proj(self.attention)

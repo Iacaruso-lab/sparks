@@ -2,7 +2,7 @@ from typing import Union, List, Optional, Tuple
 import torch
 import numpy as np
 
-from sparks.models.encoders import HebbianTransformer
+from sparks.models.encoders import HebbianEncoder
 from sparks.models.dataclasses import HebbianAttentionConfig, AttentionConfig, ProjectionConfig
 from sparks.models.decoders import mlp
 
@@ -47,15 +47,15 @@ class SPARKS(torch.nn.Module):
         elif len(id_per_session) != len(n_neurons_per_session):
             raise ValueError("`id_per_session` must have the same length as `n_neurons_per_session`.")
 
-        self.encoder = HebbianTransformer(n_neurons_per_session=n_neurons_per_session,
-                                          embed_dim=embed_dim,
-                                          latent_dim=latent_dim,
-                                          id_per_session=id_per_session,
-                                          hebbian_config=hebbian_config,
-                                          attention_config=attention_config,
-                                          projection_config=projection_config,
-                                          share_projection_head=share_projection_head,
-                                          device=device)
+        self.encoder = HebbianEncoder(n_neurons_per_session=n_neurons_per_session,
+                                      embed_dim=embed_dim,
+                                      latent_dim=latent_dim,
+                                      id_per_session=id_per_session,
+                                      hebbian_config=hebbian_config,
+                                      attention_config=attention_config,
+                                      projection_config=projection_config,
+                                      share_projection_head=share_projection_head,
+                                      device=device)
         
         if decoder is None:
             n_inputs_decoder = latent_dim * tau_p
@@ -147,3 +147,17 @@ class SPARKS(torch.nn.Module):
         if not self.decoder.joint_decoder:
             self.decoder.out_layers[str(session_id)] = torch.nn.Linear(self.decoder.layers[-2].out_features, 
                                                                        new_output_dim).to(self.device)
+    
+    def zero_(self):
+        """
+        Resets the parameters of the model to their initial state.
+        This is useful for reinitializing the model before training on a new session or dataset.
+        """
+        self.encoder.zero_()
+
+    def detach_(self):
+        """
+        Detaches the parameters of the model from the current computation graph.
+        This is useful for preventing gradients from flowing back through the encoder during online training.
+        """
+        self.encoder.detach_()

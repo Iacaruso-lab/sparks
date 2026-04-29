@@ -1,15 +1,16 @@
-from typing import Any, List
+from typing import Any, List, Union
 
 import numpy as np
 import torch
 
 from sparks.utils.misc import identity
 from sparks.models.sparks import SPARKS
+from sparks.models.transformer import HebbianTransformer
 from sparks.data.providers import StandardTargetProvider, TargetProvider
 
 
 @torch.no_grad()
-def test_on_batch(sparks: SPARKS,
+def test_on_batch(model: Union[SPARKS, HebbianTransformer],
                   inputs: torch.tensor,
                   target_provider: TargetProvider = None,
                   loss_fn: Any = None,
@@ -19,7 +20,7 @@ def test_on_batch(sparks: SPARKS,
     Tests the model on a batch of inputs and computes the loss.
 
     Args:
-        sparks (SPARKS): The SPARKS model instance.
+        model (Union[SPARKS, HebbianTransformer]): The model instance.
         inputs (torch.tensor): The input data for the batch of evaluation.
         latent_dim (int): The dimensionality of the latent space.
         tau_p (int): The size of the past window for the model to consider.
@@ -47,34 +48,42 @@ def test_on_batch(sparks: SPARKS,
     burnin = kwargs.get('burnin', 0)
     act = kwargs.get('act', identity)
     batch_idxs = kwargs.get('batch_idxs', np.arange(len(inputs)))
+    tau_f = getattr(model, 'tau_f', 1)
 
-    sparks.eval()
-    sparks.encoder.zero_()
-    encoder_outputs_batch = torch.zeros([len(inputs), sparks.latent_dim, sparks.tau_p]).to(sparks.device)
-    decoder_outputs_batch = torch.Tensor().to(sparks.device)
+    model.eval()
+    model.zero_()
+    if isinstance(model, SPARKS):
+        encoder_outputs_batch = torch.zeros([len(inputs), model.latent_dim, model.tau_p]).to(model.device)
+    else:
+        encoder_outputs_batch = None
+
+    decoder_outputs_batch = torch.Tensor()
 
     for t in range(burnin):
-        encoder_outputs_batch, _, _, _ = sparks(inputs[..., t], encoder_outputs=encoder_outputs_batch, session_id=session_id)
+        encoder_outputs_batch, _, _, _ = model(inputs[..., t], encoder_outputs=encoder_outputs_batch, 
+                                               session_id=session_id)
 
     for t in range(burnin, inputs.shape[-1]):
-        encoder_outputs_batch, decoder_outputs, _, _ = sparks(inputs[..., t], encoder_outputs=encoder_outputs_batch,
+        encoder_outputs_batch, decoder_outputs, _, _ = model(inputs[..., t], encoder_outputs=encoder_outputs_batch,
                                                               session_id=session_id)
 
-        decoder_outputs_batch = torch.cat((decoder_outputs_batch,
-                                           act(decoder_outputs).unsqueeze(2)), dim=-1)
+        decoder_outputs_batch = torch.cat((decoder_outputs_batch, act(decoder_outputs).unsqueeze(2).cpu()), dim=-1)
     
         if loss_fn is not None:
-            if t < inputs.shape[-1] - sparks.tau_f + 1:
-                target = target_provider.get_target(batch_idxs, t, sparks.tau_f, sparks.device)
-                test_loss += loss_fn(decoder_outputs, target).cpu() / (inputs.shape[-1] - sparks.tau_f + 1)
+            if t < inputs.shape[-1] - tau_f + 1:
+                target = target_provider.get_target(batch_idxs, t, tau_f, model.device)
+                test_loss += loss_fn(decoder_outputs, target).cpu() / (inputs.shape[-1] - tau_f + 1)
         else:
             test_loss = None
 
-    return test_loss, encoder_outputs_batch.cpu(), decoder_outputs_batch.cpu()
+    if encoder_outputs_batch is not None:
+        encoder_outputs_batch = encoder_outputs_batch.cpu()
+
+    return test_loss, encoder_outputs_batch, decoder_outputs_batch
 
 
 @torch.no_grad()
-def test(sparks: SPARKS,
+def test(model: Union[SPARKS, HebbianTransformer],
          test_dls: List,
          loss_fn: Any = None,
          device: torch.device = 'cpu',
@@ -83,7 +92,7 @@ def test(sparks: SPARKS,
     Tests the model on a dataset represented by a dataloader and computes the loss.
 
     Args:
-        sparks (SPARKS): The SPARKS model instance.
+        model (Union[SPARKS, HebbianTransformer]): The model instance.
         test_dls  (List[torch.utils.data.DataLoader]): Dataloaders for the testing data.
         latent_dim (int): The dimensionality of the latent space.
         tau_p (int): The size of the past window for the model to consider.
@@ -104,8 +113,13 @@ def test(sparks: SPARKS,
         decoder_outputs (torch.tensor): The outputs from the decoder.
     """
 
-    encoder_outputs = torch.Tensor()
+    if isinstance(model, SPARKS):
+        encoder_outputs = torch.Tensor()
+    else:
+        encoder_outputs = None
+
     decoder_outputs = torch.Tensor()
+
     test_loss = 0
 
     session_ids = kwargs.get('session_ids', np.arange(len(test_dls)))
@@ -118,7 +132,7 @@ def test(sparks: SPARKS,
                 target_provider = StandardTargetProvider(inputs)
             else:
                 target_provider = StandardTargetProvider(targets)
-            test_loss, encoder_outputs_batch, decoder_outputs_batch = test_on_batch(sparks=sparks,
+            test_loss, encoder_outputs_batch, decoder_outputs_batch = test_on_batch(model=model,
                                                                                     inputs=inputs,
                                                                                     target_provider=target_provider,
                                                                                     test_loss=test_loss,
@@ -127,14 +141,15 @@ def test(sparks: SPARKS,
                                                                                     session_id=session_ids[i],
                                                                                     **kwargs)
 
-            encoder_outputs = torch.cat((encoder_outputs, encoder_outputs_batch), dim=0)
+            if encoder_outputs is not None:
+                encoder_outputs = torch.cat((encoder_outputs, encoder_outputs_batch), dim=0)
             decoder_outputs = torch.cat((decoder_outputs, decoder_outputs_batch), dim=0)
 
     return test_loss, encoder_outputs, decoder_outputs
 
 
 @torch.no_grad()
-def test_on_batch_attn(sparks: SPARKS,
+def test_on_batch_attn(model: Union[SPARKS, HebbianTransformer],
                        inputs: torch.tensor,
                        target_provider: TargetProvider = None,
                        loss_fn: Any = None,
@@ -144,7 +159,7 @@ def test_on_batch_attn(sparks: SPARKS,
     Tests the model on a batch of inputs and computes the loss.
 
     Args:
-        sparks (SPARKS): The SPARKS model instance.
+        model (Union[SPARKS, HebbianTransformer]): The model instance.
         inputs (torch.tensor): The input data for the batch of evaluation.
         latent_dim (int): The dimensionality of the latent space.
         tau_p (int): The size of the past window for the model to consider.
@@ -173,30 +188,41 @@ def test_on_batch_attn(sparks: SPARKS,
     burnin = kwargs.get('burnin', 0)
     act = kwargs.get('act', identity)
     batch_idxs = kwargs.get('batch_idxs', np.arange(len(inputs)))
+    tau_f = getattr(model, 'tau_f', 1)
 
-    sparks.eval()
-    sparks.encoder.zero_()
-    encoder_outputs_batch = torch.zeros([len(inputs), sparks.latent_dim, sparks.tau_p]).to(sparks.device)
-    decoder_outputs_batch = torch.Tensor().to(sparks.device)
-    attn_coeffs_batch = torch.Tensor().to(sparks.device)
+    model.eval()
+    model.zero_()
+    if isinstance(model, SPARKS):
+        encoder_outputs_batch = torch.zeros([len(inputs), model.latent_dim, model.tau_p])
+    else:
+        encoder_outputs_batch = None
+    decoder_outputs_batch = torch.Tensor()
+    attn_coeffs_batch = torch.Tensor()
 
     for t in range(burnin):
-        encoder_outputs_batch, _, _, _ = sparks(inputs[..., t], encoder_outputs=encoder_outputs_batch, session_id=session_id)
+        encoder_outputs, _, _, _ = model(inputs[..., t], encoder_outputs=encoder_outputs_batch, 
+                                               session_id=session_id)
 
     for t in range(burnin, inputs.shape[-1]):
-        encoder_outputs_batch, decoder_outputs, _, _ = sparks(inputs[..., t], encoder_outputs=encoder_outputs_batch,
-                                                              session_id=session_id)
-
+        encoder_outputs, decoder_outputs, _, _ = model(inputs[..., t], encoder_outputs=encoder_outputs_batch,
+                                                       session_id=session_id)
+        
         decoder_outputs_batch = torch.cat((decoder_outputs_batch,
-                                           act(decoder_outputs).unsqueeze(2)), dim=-1)
-        attn_coeffs_batch = torch.cat((attn_coeffs_batch,
-                                       sparks.encoder.hebbian_blocks[str(session_id)].attention_layer.heads[0].attention.unsqueeze(3)), dim=-1)
+                                           act(decoder_outputs).unsqueeze(2)).cpu(), dim=-1)
+                
+        if isinstance(model, SPARKS):
+            encoder_outputs_batch = torch.cat((encoder_outputs_batch, encoder_outputs.unsqueeze(2)).cpu(), dim=-1)
+            attn_coeffs_batch = torch.cat((attn_coeffs_batch,
+                                           model.encoder.hebbian_blocks[str(session_id)].attention_layer.heads[0].attention.unsqueeze(3)).cpu(), dim=-1)
+        else:
+            attn_coeffs_batch = torch.cat((attn_coeffs_batch,
+                                           model.hebbian_blocks[str(session_id)].attention_layer.heads[0].attention.unsqueeze(3)).cpu(), dim=-1)
     
         if loss_fn is not None:
-            if t < inputs.shape[-1] - sparks.tau_f + 1:
-                target = target_provider.get_target(batch_idxs, t, sparks.tau_f, sparks.device)
-                test_loss += loss_fn(decoder_outputs, target).cpu() / (inputs.shape[-1] - sparks.tau_f + 1)
+            if t < inputs.shape[-1] - tau_f + 1:
+                target = target_provider.get_target(batch_idxs, t, tau_f, model.device)
+                test_loss += loss_fn(decoder_outputs, target).cpu() / (inputs.shape[-1] - tau_f + 1)
         else:
             test_loss = None
 
-    return test_loss, encoder_outputs_batch.cpu(), decoder_outputs_batch.cpu(), attn_coeffs_batch.cpu()
+    return test_loss, encoder_outputs_batch, decoder_outputs_batch, attn_coeffs_batch

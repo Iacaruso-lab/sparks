@@ -11,8 +11,8 @@ class HebbianAttentionConfig:
     block_class: Type[nn.Module] = HebbianAttentionBlock
     tau_s: float = 1.0  # Default value for the time constant in ms
     dt: float = 0.001      # Default value for the time-step in ms
-    w_start: float = 1.0
-    alpha: float = 1.0
+    w_plus: float = 0.001
+    alpha: float = 1.1
     n_heads: int = 1
     data_type: str = 'ephys' # Type of data, can be 'ephys' or 'calcium'
     sliding: bool = False # Whether to use sliding windows
@@ -31,7 +31,7 @@ class HebbianAttentionConfig:
         config_params = {
             'tau_s': self.tau_s,
             'dt': self.dt,
-            'w_start': self.w_start,
+            'w_plus': self.w_plus,
             'alpha': self.alpha,
             'n_heads': self.n_heads,
             'data_type': self.data_type,
@@ -39,7 +39,7 @@ class HebbianAttentionConfig:
             'window_size': self.window_size,
             'block_size': self.block_size,
             'min_attn_value': self.min_attn_value,
-            'max_attn_value': self.max_attn_value
+            'max_attn_value': self.max_attn_value,
         }
 
         # Merge with existing params, giving priority to explicitly set params

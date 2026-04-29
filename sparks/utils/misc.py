@@ -3,12 +3,13 @@ import fnmatch
 import json
 import os
 import time
-from typing import List
+from typing import List, Union
 
 import numpy as np
 import torch
 
 from sparks.models.sparks import SPARKS
+from sparks.models.transformer import HebbianTransformer
 
 
 def make_res_folder(name: str, path_to_res: str, args: argparse.Namespace):
@@ -35,22 +36,16 @@ def make_res_folder(name: str, path_to_res: str, args: argparse.Namespace):
         None
     """
 
-    prelist = np.sort(fnmatch.filter(os.listdir(os.path.join(path_to_res, r"results")), '[0-9][0-9][0-9]__*'))
+    if not os.path.exists(path_to_res):
+        os.makedirs(path_to_res)
+
+    prelist = np.sort(fnmatch.filter(os.listdir(path_to_res), '[0-9][0-9][0-9]__*'))
     if len(prelist) == 0:
         expDirN = "001"
     else:
         expDirN = "%03d" % (int((prelist[len(prelist) - 1].split("__"))[0]) + 1)
 
-    online_flag = '_online' if args.online else ''
-    try:
-        args.results_path = time.strftime(path_to_res + '/results/' + expDirN + "__" + "%d-%m-%Y_"
-                                          + name + online_flag + '_taus_' + str(args.tau_s) + '_taup_' + str(args.tau_p)
-                                          + '_tauf_' + str(args.tau_f) + '_embed_dim_' + str(args.embed_dim)
-                                          + "_latent_dim_" + str(args.latent_dim) + "_beta_" + str(args.beta)
-                                          + "_lr_" + str(args.lr) + "_n_layers_" + str(args.n_layers), time.localtime())
-    except AttributeError:
-        args.results_path = time.strftime(path_to_res + '/results/' + expDirN + "__" + "%d-%m-%Y_"
-                                          + name + online_flag, time.localtime())
+    args.results_path = time.strftime(path_to_res + '/' + expDirN + "__" + "%d-%m-%Y_" + name, time.localtime())
     os.makedirs(args.results_path)
 
     with open(os.path.join(args.results_path, 'commandline_args.txt'), 'w') as f:
@@ -67,9 +62,9 @@ def make_res_folder(name: str, path_to_res: str, args: argparse.Namespace):
 def save_results(results_path: str,
                  test_acc: float,
                  best_test_acc: float,
-                 encoder_outputs: torch.Tensor,
+                 encoder_outputs: Union[torch.Tensor, None],
                  decoder_outputs: torch.Tensor,
-                 sparks: SPARKS):
+                 model: Union[SPARKS, HebbianTransformer]):
     """
     Saves test results, and the current encoder and decoder states if the test_acc is greater than the best seen so far.
 
@@ -90,12 +85,14 @@ def save_results(results_path: str,
     if test_acc >= best_test_acc:
         best_test_acc = test_acc
         np.save(results_path + '/test_acc.npy', test_acc)
-        np.save(results_path + '/test_enc_outputs_best.npy', encoder_outputs.cpu().numpy())
-        torch.save(sparks.state_dict(), results_path + '/sparks.pt')
+        if encoder_outputs is not None:
+            np.save(results_path + '/test_enc_outputs_best.npy', encoder_outputs.cpu().numpy())
+        torch.save(model.state_dict(), results_path + '/sparks.pt')
         np.save(results_path + '/test_dec_outputs_best.npy', decoder_outputs.cpu().numpy())
     else:
+        if encoder_outputs is not None:
+            np.save(results_path + '/test_enc_outputs_last.npy', encoder_outputs.cpu().numpy())
         np.save(results_path + '/test_dec_outputs_last.npy', decoder_outputs.cpu().numpy())
-        np.save(results_path + '/test_enc_outputs_last.npy', encoder_outputs.cpu().numpy())
 
     return best_test_acc
 
@@ -103,9 +100,9 @@ def save_results(results_path: str,
 def save_results_finetuning(results_path: str,
                             test_acc: float,
                             best_test_acc: float,
-                            encoder_outputs: torch.Tensor,
+                            encoder_outputs: Union[torch.Tensor, None],
                             decoder_outputs: torch.Tensor,
-                            sparks: SPARKS,
+                            model: Union[SPARKS, HebbianTransformer],
                             pretrain_datasets_acc_evolution: List[float],
                             new_datasets_acc_evolution: List[float]):
     """
@@ -121,8 +118,7 @@ def save_results_finetuning(results_path: str,
         best_test_acc (float): The best test accuracy achieved so far.
         encoder_outputs (torch.Tensor): The tensor of encoder outputs.
         decoder_outputs (torch.Tensor): The tensor of decoder outputs.
-        encoder (torch.nn.Module): The encoder model of the VAE.
-        decoder (torch.nn.Module): The decoder model of the VAE.
+        model (Union[SPARKS, HebbianTransformer]): The model instance.
         pretrain_datasets_acc_evolution (list of float): The list of accuracy values for the pretraining datasets over time.
         new_datasets_acc_evolution (list of float): The list of accuracy values for the new datasets over time.
 
@@ -133,7 +129,7 @@ def save_results_finetuning(results_path: str,
     if test_acc > best_test_acc:
         np.save(os.path.join(results_path, 'finetune_test_enc_outputs_best.npy'),
                 encoder_outputs.cpu().numpy())
-        torch.save(sparks.state_dict(),
+        torch.save(model.state_dict(),
                    os.path.join(results_path, 'sparks.pt'))
         np.save(os.path.join(results_path, 'finetune_test_dec_outputs_best.npy'),
                 decoder_outputs.cpu().numpy())
@@ -148,3 +144,21 @@ def save_results_finetuning(results_path: str,
 
 def identity(x):
     return x
+
+
+class EarlyStopper:
+    def __init__(self, patience=1, min_delta=0):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.counter = 0
+        self.max_acc = -np.inf
+
+    def early_stop(self, test_acc):
+        if test_acc > self.max_acc:
+            self.max_acc = test_acc
+            self.counter = 0
+        elif test_acc < (self.max_acc + self.min_delta):
+            self.counter += 1
+            if self.counter >= self.patience:
+                return True
+        return False

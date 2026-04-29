@@ -4,9 +4,10 @@ import torch
 import torch.nn as nn
 
 from sparks.models.dataclasses import HebbianAttentionConfig, AttentionConfig, ProjectionConfig
+from sparks.models.blocks import AttentionBlock
 
 
-class HebbianTransformer(nn.Module):
+class HebbianEncoder(nn.Module):
     """
     Initialize a Hebbian Transformer Encoder.
 
@@ -226,3 +227,55 @@ class HebbianTransformer(nn.Module):
         for session_id in self.session_ids:
             session_id = str(session_id)
             self.hebbian_blocks[session_id].zero_()
+
+
+class TransformerEncoder(torch.nn.Module):
+    """
+    Linear encoder with attention layer
+    """
+
+    def __init__(self, n_inputs, embed_dim, latent_dim, n_layers=1, n_heads=1):
+        """
+        :param n_inputs: number of input neurons
+        :param hidden_dims:
+        :param latent_dim:
+        :param tau_s: time constant for the attention
+        :param device: device to use
+        """
+
+        super(TransformerEncoder, self).__init__()
+
+        self.layers = torch.nn.ModuleList([torch.nn.Linear(n_inputs, embed_dim)])
+        for _ in range(n_layers):
+            self.layers.append(AttentionBlock(embed_dim, n_heads))
+
+        self.fc_mu = torch.nn.Linear(embed_dim, latent_dim)
+        self.fc_var = torch.nn.Linear(embed_dim, latent_dim)
+
+    def forward(self, x, id=None):
+        """
+        Forward pass of the encoder
+        :param spikes: spikes of the neurons [batch_size, n_neurons, n_timesteps]
+        :return: encoded signal the output neurons [batch_size, latent_dim]
+        """
+
+        x = x.unsqueeze(1)
+        for layer in self.layers:
+            x = layer(x)
+
+        mu = self.fc_mu(x.flatten(1))
+        logvar = self.fc_var(x.flatten(1))
+
+        return mu, logvar
+
+    def reparametrize(self, mu, logvar):
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+
+        return eps * std + mu
+
+    def detach_(self):
+        self.layers[1].detach_()
+
+    def zero_(self):
+        self.layers[1].zero_()

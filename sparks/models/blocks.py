@@ -3,7 +3,7 @@ from torch import nn
 
 from sparks.models.attention import EphysAttentionLayer, CalciumAttentionLayer
 from sparks.models.sparse_attention import SlidingWindowEphysAttentionLayer, SlidingWindowCalciumAttentionLayer
-from sparks.models.utils import FeedForward, scaled_dot_product
+from sparks.models.utils import FeedForward, MultiheadAttention
 
 
 class MultiHeadedHebbianAttentionLayer(torch.nn.Module):
@@ -13,14 +13,14 @@ class MultiHeadedHebbianAttentionLayer(torch.nn.Module):
                  n_heads: int = 1,    
                  tau_s: float = 1.0,
                  dt: float = 0.001,
-                 w_start: float = 1.0,
-                 alpha: float = 1.0,
+                 w_plus: float = 0.001,
+                 alpha: float = 1.1,
                  data_type: str = 'ephys',
                  sliding: bool = False,
                  window_size: int = 1,
                  block_size: int = 1,
                  min_attn_value: float = -0.5,
-                 max_attn_value: float = 1.5):
+                 max_attn_value: float = 1.5) -> None:
         """
         Initializes the MultiHeadedHebbianAttentionLayer class with given parameters.
 
@@ -33,7 +33,7 @@ class MultiHeadedHebbianAttentionLayer(torch.nn.Module):
             n_heads (int): The number of attention heads.
             tau_s (float): The time constant for STDP.
             dt (float): The time-step for STDP coefficients.
-            w_start (float): The initial weight for the attention mechanism.
+            w_plus (float): The positive weight for the attention mechanism.
             alpha (float): The scaling factor for the post-synaptic weight.
             data_type (str): The type of data, can be 'ephys' or 'calcium'.
             sliding (bool): Whether to use sliding windows for attention.
@@ -73,7 +73,7 @@ class MultiHeadedHebbianAttentionLayer(torch.nn.Module):
                                                       embed_dim=head_embed_dim,
                                                       tau_s=tau_s,
                                                       dt=dt,
-                                                      w_start=w_start,
+                                                      w_plus=w_plus,
                                                       alpha=alpha,
                                                       min_attn_value=min_attn_value,
                                                       max_attn_value=max_attn_value,
@@ -136,8 +136,8 @@ class HebbianAttentionBlock(nn.Module):
                  n_heads: int = 1,    
                  tau_s: float = 1.0,
                  dt: float = 0.001,
-                 w_start: float = 1.0,
-                 alpha: float = 1.0,
+                 w_plus: float = 0.001,
+                 alpha: float = 1.1,
                  data_type: str = 'ephys',
                  sliding: bool = False,
                  window_size: int = 1,
@@ -154,6 +154,16 @@ class HebbianAttentionBlock(nn.Module):
             n_total_neurons (int): The total number of neurons.
             embed_dim (int): The number of dimensions for embedded output.
             n_heads (int, optional): The number of heads in the attention mechanism. Defaults to 1.
+            tau_s (float, optional): The time constant for STDP. Defaults to 1.0.
+            dt (float, optional): The time-step for STDP coefficients. Defaults to 0.001.
+            w_plus (float, optional): The positive weight for the attention mechanism. Defaults to 0.001.
+            alpha (float, optional): The scaling factor for the post-synaptic weight. Defaults to 1.1.
+            data_type (str, optional): The type of data, can be 'ephys' or 'calcium'. Defaults to 'ephys'.
+            sliding (bool, optional): Whether to use sliding windows for attention. Defaults to False.
+            window_size (int, optional): The size of the sliding window for attention. Defaults to 1.
+            block_size (int, optional): The size of the block for the attention mechanism in sliding mode. Defaults to 1.
+            min_attn_value (float, optional): The minimum value for attention coefficients. Defaults to -0.5.
+            max_attn_value (float, optional): The maximum value for attention coefficients. Defaults to 1.5.
             config (HebbianAttentionConfig): Configuration for the Hebbian attention block.
             
         Returns:
@@ -166,7 +176,7 @@ class HebbianAttentionBlock(nn.Module):
                                                                 n_heads=n_heads,
                                                                 tau_s=tau_s,
                                                                 dt=dt,
-                                                                w_start=w_start,
+                                                                w_plus=w_plus,
                                                                 alpha=alpha,
                                                                 data_type=data_type,
                                                                 sliding=sliding,
@@ -174,10 +184,11 @@ class HebbianAttentionBlock(nn.Module):
                                                                 block_size=block_size,
                                                                 min_attn_value=min_attn_value,
                                                                 max_attn_value=max_attn_value)
-           
+
         self.o_proj = nn.Linear(embed_dim, embed_dim)
         self.ff = FeedForward(embed_dim)
         self.embed_dim = embed_dim
+        self.norm = nn.RMSNorm(embed_dim)
 
     def forward(self, x):
         """
@@ -188,7 +199,7 @@ class HebbianAttentionBlock(nn.Module):
 
         x = self.attention_layer(x)  # [batch_size, n_inputs, embed_dim]
         x = self.o_proj(x)  # [batch_size, n_inputs, embed_dim]
-        x = self.ff(x) + x
+        x = self.ff(self.norm(x)) + x
 
         return x  # [batch_size, n_inputs, latent_dim]
 
@@ -215,60 +226,17 @@ class HebbianAttentionBlock(nn.Module):
         self.attention_layer.zero_()
 
 
-class MultiheadAttention(torch.nn.Module):
-    """
-    From https://uvadlc-notebooks.readthedocs.io/en/latest/tutorial_notebooks/tutorial6/Transformers_and_MHAttention.html
-    """
-
-    def __init__(self, embed_dim, n_heads):
-        super().__init__()
-        assert embed_dim % n_heads == 0, "Embedding dimension must be 0 modulo number of heads."
-
-        self.embed_dim = embed_dim
-        self.n_heads = n_heads
-        self.head_dim = embed_dim // n_heads
-
-        self.qkv_proj = torch.nn.Linear(embed_dim, 3 * embed_dim)
-        self.o_proj = torch.nn.Linear(embed_dim, embed_dim)
-
-        self._reset_parameters()
-
-    def _reset_parameters(self):
-        torch.nn.init.xavier_uniform_(self.qkv_proj.weight)
-        self.qkv_proj.bias.data.fill_(0)
-        torch.nn.init.xavier_uniform_(self.o_proj.weight)
-        self.o_proj.bias.data.fill_(0)
-
-    def forward(self, x):
-        batch_size, seq_length, _ = x.size()
-        qkv = self.qkv_proj(x)
-
-        # Separate Q, K, V from linear output
-        qkv = qkv.reshape(batch_size, seq_length, self.n_heads, 3 * self.head_dim)
-        qkv = qkv.permute(0, 2, 1, 3)  # [Batch, Head, SeqLen, Dims]
-        q, k, v = qkv.chunk(3, dim=-1)
-
-        # Determine value outputs
-        values, attention = scaled_dot_product(q, k, v)
-        values = values.permute(0, 2, 1, 3)  # [Batch, SeqLen, Head, Dims]
-        values = values.reshape(batch_size, seq_length, self.embed_dim)
-        o = self.o_proj(values)
-
-        return o
-
-
 class AttentionBlock(torch.nn.Module):
     def __init__(self, embed_dim, n_heads=1):
         super(AttentionBlock, self).__init__()
         self.attention = MultiheadAttention(embed_dim, n_heads)
         self.ff = FeedForward(embed_dim)
-        self.norm = torch.nn.LayerNorm(embed_dim)
+        self.norm = torch.nn.RMSNorm(embed_dim)
 
     def forward(self, x):
         # x shape: [batch_size, n_inputs, input_dim]
-        x = self.norm(x)
-        x = self.attention(x) + x
-        x = self.ff(x) + x
+        x = self.attention(self.norm(x)) + x
+        x = self.ff(self.norm(x)) + x
 
         return x  # [batch_size, n_inputs, input_dim]
 
