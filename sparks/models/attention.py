@@ -54,21 +54,31 @@ class BaseHebbianAttentionLayer(nn.Module):
             torch.Tensor: The attention coefficients after applying the attention operation.
             The size of the output tensor is [batch_size, len(n_neurons), embed_dim].
         """
-        pre_spikes, post_spikes = self.get_pre_post_spikes(spikes)
-        self.pre_trace_decay(pre_spikes)
-        self.post_trace_decay(post_spikes)
 
-        self.attention = (self.attention 
-                          + (1 - self.attention) * (self.pre_trace * (post_spikes != 0)).view(spikes.shape[0],self.n_neurons,-1)
-                          - self.attention * (self.post_trace * (pre_spikes != 0)).view(spikes.shape[0],self.n_neurons, -1))
-        
-        self.pre_trace = self.pre_trace + pre_spikes * self.latent_pre_weight.exp()
-        self.post_trace = self.post_trace + post_spikes * self.latent_post_weight.exp()
+        stdp_history = []
+        B, N, T = spikes.shape
 
-        if torch.isnan(self.attention).any():
-            raise ValueError("NaN values detected in attention coefficients.")
+        stdp = 0.
+        pre_trace = 0.
+        post_trace = 0.
 
-        return self.v_proj(self.attention)
+        for t in range(T):
+            pre_spikes, post_spikes = self.get_pre_post_spikes(spikes[..., t])
+            pre_trace = self.trace_decay(pre_trace, pre_spikes, self.latent_pre_tau_s)
+            post_trace = self.trace_decay(post_trace, post_spikes, self.latent_post_tau_s)
+
+            stdp = (stdp + (1 - stdp) * (pre_trace * (post_spikes != 0)).view(B, N, N)
+                    - stdp * (post_trace * (pre_spikes != 0)).view(B, N, N))
+            
+            pre_trace = pre_trace + pre_spikes * self.latent_pre_weight.exp()
+            post_trace = post_trace + post_spikes * self.latent_post_weight.exp()
+
+            if torch.isnan(stdp).any():
+                raise ValueError("NaN values detected in attention coefficients.")
+            
+            stdp_history.append(stdp.unsqueeze(1))
+
+        return self.v_proj(torch.stack(stdp_history, dim=1))
 
     def get_pre_post_spikes(self, spikes: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -82,36 +92,19 @@ class BaseHebbianAttentionLayer(nn.Module):
         """
         raise NotImplementedError("This method should be implemented in subclasses.")
 
-    def pre_trace_decay(self, pre_spikes: torch.Tensor) -> None:
+    def trace_decay(self, trace: torch.Tensor, spikes: torch.Tensor, tau_s: float) -> torch.Tensor:
         """
-        Update the pre-synaptic eligibility traces.
+        Update the eligibility traces.
 
         Args:
-            pre (torch.Tensor): Tensor of pre-synaptic neuron spike activity.
+            trace (torch.Tensor): Current eligibility trace.
+            spikes (torch.Tensor): Tensor of neuron spike activity.
+            tau_s (float): The time constant for trace decay.
 
         Returns:
-            None
+            torch.Tensor: The updated eligibility trace.
         """
         raise NotImplementedError("This method should be implemented in subclasses.")
-
-    def post_trace_decay(self, post_spikes: torch.Tensor) -> None:
-        """
-        Update the post-synaptic eligibility traces.
-
-        Args:
-            post_spikes (torch.Tensor): Tensor of post-synaptic neuron spike activity.
-
-        Returns:
-            None
-        """
-        raise NotImplementedError("This method should be implemented in subclasses.")
-
-    def detach_(self):
-        if isinstance(self.attention, torch.Tensor):
-            self.attention = self.attention.detach()
-
-    def zero_(self):
-        self.attention = 0.
 
 
 class DenseHebbianAttentionLayer(BaseHebbianAttentionLayer):
