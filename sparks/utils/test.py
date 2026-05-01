@@ -12,7 +12,7 @@ from sparks.data.providers import StandardTargetProvider, TargetProvider
 @torch.no_grad()
 def test_on_batch(model: Union[SPARKS, HebbianTransformer],
                   inputs: torch.tensor,
-                  target_provider: TargetProvider = None,
+                  targets: torch.tensor,
                   loss_fn: Any = None,
                   test_loss: float = 0,
                   **kwargs):
@@ -49,32 +49,22 @@ def test_on_batch(model: Union[SPARKS, HebbianTransformer],
     act = kwargs.get('act', identity)
     batch_idxs = kwargs.get('batch_idxs', np.arange(len(inputs)))
     tau_f = getattr(model, 'tau_f', 1)
+    device = kwargs.get('device', 'cpu')
 
     model.eval()
-    model.zero_()
+
     if isinstance(model, SPARKS):
         encoder_outputs_batch = torch.zeros([len(inputs), model.latent_dim, model.tau_p]).to(model.device)
     else:
         encoder_outputs_batch = None
 
-    decoder_outputs_batch = torch.Tensor()
+    encoder_outputs_batch, decoder_outputs_batch, _, _ = model(inputs, encoder_outputs=encoder_outputs_batch,
+                                                               session_id=session_id)
 
-    for t in range(burnin):
-        encoder_outputs_batch, _, _, _ = model(inputs[..., t], encoder_outputs=encoder_outputs_batch, 
-                                               session_id=session_id)
-
-    for t in range(burnin, inputs.shape[-1]):
-        encoder_outputs_batch, decoder_outputs, _, _ = model(inputs[..., t], encoder_outputs=encoder_outputs_batch,
-                                                              session_id=session_id)
-
-        decoder_outputs_batch = torch.cat((decoder_outputs_batch, act(decoder_outputs).unsqueeze(2).cpu()), dim=-1)
-    
-        if loss_fn is not None:
-            if t < inputs.shape[-1] - tau_f + 1:
-                target = target_provider.get_target(batch_idxs, t, tau_f, model.device)
-                test_loss += loss_fn(decoder_outputs, target).cpu() / (inputs.shape[-1] - tau_f + 1)
-        else:
-            test_loss = None
+    if loss_fn is not None:
+            test_loss += loss_fn(decoder_outputs_batch, targets.to(device)).cpu()
+    else:
+        test_loss = None
 
     if encoder_outputs_batch is not None:
         encoder_outputs_batch = encoder_outputs_batch.cpu()
@@ -128,13 +118,9 @@ def test(model: Union[SPARKS, HebbianTransformer],
     for i, test_dl in enumerate(test_dls):
         test_iterator = iter(test_dl)
         for inputs, targets in test_iterator:
-            if unsupervised:
-                target_provider = StandardTargetProvider(inputs)
-            else:
-                target_provider = StandardTargetProvider(targets)
             test_loss, encoder_outputs_batch, decoder_outputs_batch = test_on_batch(model=model,
                                                                                     inputs=inputs,
-                                                                                    target_provider=target_provider,
+                                                                                    targets=targets if not unsupervised else inputs,
                                                                                     test_loss=test_loss,
                                                                                     loss_fn=loss_fn,
                                                                                     device=device,
@@ -187,15 +173,14 @@ def test_on_batch_attn(model: Union[SPARKS, HebbianTransformer],
     session_id = kwargs.get('session_id', 0)
     burnin = kwargs.get('burnin', 0)
     act = kwargs.get('act', identity)
-    batch_idxs = kwargs.get('batch_idxs', np.arange(len(inputs)))
     tau_f = getattr(model, 'tau_f', 1)
 
     model.eval()
-    model.zero_()
     if isinstance(model, SPARKS):
         encoder_outputs_batch = torch.zeros([len(inputs), model.latent_dim, model.tau_p])
     else:
         encoder_outputs_batch = None
+
     decoder_outputs_batch = torch.Tensor()
     attn_coeffs_batch = torch.Tensor()
 

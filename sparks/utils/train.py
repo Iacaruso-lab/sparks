@@ -38,7 +38,7 @@ def update_and_reset(model: Union[SPARKS, HebbianTransformer],
 
 def train_on_batch(model: Union[SPARKS, HebbianTransformer],
                    inputs: torch.tensor,
-                   target_provider: TargetProvider,
+                   targets: torch.tensor,
                    loss_fn: Any,
                    optimizer: torch.optim.Optimizer,
                    device: Union[str, torch.device] = 'cpu',
@@ -49,7 +49,7 @@ def train_on_batch(model: Union[SPARKS, HebbianTransformer],
     Args:
         model (Union[SPARKS, HebbianTransformer]): The model instance.
         inputs (torch.tensor): The input data for the batch of training.
-        target_provider (TargetProvider): The provider for generating targets.
+        targets (torch.tensor): The target data for the batch of training.
         loss_fn (Any): The loss function used to evaluate the model's predictions.
         optimizer (torch.optim.Optimizer): The optimizer algorithm used to update the model's parameters.
         beta (float, optional): The regularization strength of the Kullback–Leibler divergence in the loss function.
@@ -65,17 +65,13 @@ def train_on_batch(model: Union[SPARKS, HebbianTransformer],
         None. The model parameters are updated inline.
     """
 
-    online = kwargs.get('online', False)
     session_id = kwargs.get('session_id', 0)
-    batch_idxs = kwargs.get('batch_idxs', np.arange(len(inputs)))
     beta = kwargs.get('beta', None)
     tau_f = getattr(model, 'tau_f', 1)
 
     # Number of burn-in timesteps
-    burnin = kwargs.get('burnin', 0)
 
     model.train()
-    model.zero_()
 
     if hasattr(model, 'encoder'):
         encoder_outputs = torch.zeros([len(inputs), model.latent_dim, model.tau_p]).to(device)
@@ -84,33 +80,15 @@ def train_on_batch(model: Union[SPARKS, HebbianTransformer],
 
     loss = 0
 
-    with torch.no_grad():
-        for t in range(burnin):
-            encoder_outputs, _, _, _ = model(inputs[..., t], encoder_outputs=encoder_outputs, session_id=session_id)
+    encoder_outputs, decoder_outputs, mu, logvar = model(inputs, encoder_outputs=encoder_outputs, 
+                                                         session_id=session_id)
 
-    for t in range(burnin, inputs.shape[-1] - tau_f + 1):
-        encoder_outputs, decoder_outputs, mu, logvar = model(inputs[..., t], encoder_outputs=encoder_outputs,
-                                                             session_id=session_id)
-
-        target = target_provider.get_target(batch_idxs, t, tau_f, device)
-        
-        # Online updates the loss at every time-step
-        if online:
-            loss = kl_loss(decoder_outputs, target, loss_fn, mu, logvar, beta)
-            update_and_reset(model, loss, optimizer)
-            model.detach_()
-            if hasattr(model, 'encoder'):
-                encoder_outputs.detach_()
-        else:
-            if beta is not None:
-                loss += kl_loss(decoder_outputs, target, loss_fn, mu, logvar, beta)
-            else:
-                loss += loss_fn(decoder_outputs, target)
+    if beta is not None:
+        loss += kl_loss(decoder_outputs, targets.to(model.device), loss_fn, mu, logvar, beta)
+    else:
+        loss += loss_fn(decoder_outputs, targets.to(model.device))
  
-        torch.cuda.empty_cache()
-
-    if not online:
-        update_and_reset(model, loss, optimizer)
+    update_and_reset(model, loss, optimizer)
 
 def train(model: Union[SPARKS, HebbianTransformer],
           train_dls: List,
@@ -144,20 +122,19 @@ def train(model: Union[SPARKS, HebbianTransformer],
 
     session_ids = kwargs.get('session_ids', np.arange(len(train_dls)))
     unsupervised = kwargs.get('unsupervised', False)
+    scheduler = kwargs.get('scheduler', None)
 
     random_order = np.random.choice(np.arange(len(train_dls)), size=len(train_dls), replace=False)
     train_iterator = LongCycler([train_dls[i] for i in random_order])
 
     for i, (inputs, targets) in enumerate(train_iterator):
-        if unsupervised:
-            target_provider = StandardTargetProvider(inputs)
-        else:
-            target_provider = StandardTargetProvider(targets)
-
         train_on_batch(model=model,
                        inputs=inputs,
-                       target_provider=target_provider,
+                       targets=targets if not unsupervised else inputs,
                        loss_fn=loss_fn,
                        optimizer=optimizer,
                        session_id=session_ids[random_order[i % len(train_dls)]],
                        **kwargs)
+
+        if scheduler is not None:
+            scheduler.step()

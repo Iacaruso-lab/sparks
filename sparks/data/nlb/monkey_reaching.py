@@ -112,7 +112,7 @@ class MonkeyReachingDataset(BaseDataset):
         super(MonkeyReachingDataset).__init__()
 
         self.x_trial_data = np.vstack([align_data[i]['spikes'].to_numpy().reshape([-1, 600, 65]) 
-                                       for i in range(len(align_data))]).transpose(0, 2, 1)
+                                       for i in range(len(align_data))])
         
         if y_keys == 'force':
             subkeys = ['xmo', 'ymo', 'zmo']
@@ -126,15 +126,15 @@ class MonkeyReachingDataset(BaseDataset):
             if subkeys is not None:
                 y_dim = lag_align_data[0][y_keys][subkeys].to_numpy().shape[-1]
                 y_trial_data = np.vstack([lag_align_data[i][y_keys][subkeys].to_numpy().reshape([-1, 600, y_dim])
-                                          for i in range(len(lag_align_data))]).transpose([0, 2, 1])
+                                          for i in range(len(lag_align_data))])
             else:
                 y_dim = lag_align_data[0][y_keys].to_numpy().shape[-1]
                 y_trial_data = np.vstack([lag_align_data[i][y_keys].to_numpy().reshape([-1, 600, y_dim])
-                                          for i in range(len(lag_align_data))]).transpose([0, 2, 1])
+                                          for i in range(len(lag_align_data))])
 
         self.y_trial_data = y_trial_data
-        self.y_shape = self.y_trial_data.shape[-2]
-        self.x_shape = self.x_trial_data.shape[-2]
+        self.y_shape = self.y_trial_data.shape[-1]
+        self.x_shape = self.x_trial_data.shape[-1]
 
         self.smooth = smooth
         self.mode = mode

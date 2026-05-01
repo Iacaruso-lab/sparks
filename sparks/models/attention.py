@@ -4,6 +4,7 @@ import numpy as np
 import torch
 from torch.nn import Parameter
 import torch.nn as nn
+import math
 
 
 class BaseHebbianAttentionLayer(nn.Module):
@@ -56,16 +57,16 @@ class BaseHebbianAttentionLayer(nn.Module):
         """
 
         stdp_history = []
-        B, N, T = spikes.shape
+        B, T, N = spikes.shape
 
         stdp = 0.
         pre_trace = 0.
         post_trace = 0.
 
         for t in range(T):
-            pre_spikes, post_spikes = self.get_pre_post_spikes(spikes[..., t])
-            pre_trace = self.trace_decay(pre_trace, pre_spikes, self.latent_pre_tau_s)
-            post_trace = self.trace_decay(post_trace, post_spikes, self.latent_post_tau_s)
+            pre_spikes, post_spikes = self.get_pre_post_spikes(spikes[:, t])
+            pre_trace = self.trace_decay(pre_trace, pre_spikes, self.latent_pre_tau_s.exp())
+            post_trace = self.trace_decay(post_trace, post_spikes, self.latent_post_tau_s.exp())
 
             stdp = (stdp + (1 - stdp) * (pre_trace * (post_spikes != 0)).view(B, N, N)
                     - stdp * (post_trace * (pre_spikes != 0)).view(B, N, N))
@@ -78,7 +79,7 @@ class BaseHebbianAttentionLayer(nn.Module):
             
             stdp_history.append(stdp.unsqueeze(1))
 
-        return self.v_proj(torch.stack(stdp_history, dim=1))
+        return self.v_proj(torch.concatenate(stdp_history, dim=1))
 
     def get_pre_post_spikes(self, spikes: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -196,73 +197,37 @@ class EphysAttentionLayer(DenseHebbianAttentionLayer):
                          alpha=alpha,
                          **kwargs)
 
-        self.pre_trace = 0.
-        self.post_trace = 0.
+        # self.latent_pre_weight = Parameter(torch.tensor(np.log(self.w_plus)).type(torch.float32))
+        # self.latent_post_weight = Parameter(torch.tensor(np.log(self.w_plus * self.alpha)).type(torch.float32))
 
-        self.latent_pre_weight = Parameter(torch.tensor(np.log(self.w_plus)).type(torch.float32))
-        self.latent_post_weight = Parameter(torch.tensor(np.log(self.w_plus * self.alpha)).type(torch.float32))
+        # self.latent_pre_tau_s = Parameter(torch.tensor(np.log(self.tau_s)).type(torch.float32))
+        # self.latent_post_tau_s = Parameter(torch.tensor(np.log(self.tau_s)).type(torch.float32))
+        
+        self.latent_pre_weight = torch.tensor(np.log(self.w_plus)).type(torch.float32)
+        self.latent_post_weight = torch.tensor(np.log(self.w_plus * self.alpha)).type(torch.float32)
 
-        self.latent_pre_tau_s = Parameter(torch.tensor(np.log(self.tau_s)).type(torch.float32))
-        self.latent_post_tau_s = Parameter(torch.tensor(np.log(self.tau_s)).type(torch.float32))
+        self.latent_pre_tau_s = torch.tensor(np.log(self.tau_s)).type(torch.float32)
+        self.latent_post_tau_s = torch.tensor(np.log(self.tau_s)).type(torch.float32)
 
-    def pre_trace_decay(self, pre_spikes: torch.Tensor) -> None:
+
+    def trace_decay(self, trace: torch.Tensor, spikes: torch.Tensor, tau_s: float) -> torch.Tensor:
         """
-        Update the pre-synaptic eligibility traces.
+        Update the eligibility traces.
 
         Args:
-            pre_spikes (torch.Tensor): Tensor of pre-synaptic neuron spike activity.
+            trace (torch.Tensor): Current eligibility trace.
+            spikes (torch.Tensor): Tensor of neuron spike activity.
+            tau_s (float): The time constant for trace decay.
 
         Returns:
-            None
+            torch.Tensor: The updated eligibility trace.
         """
-
-        if isinstance(self.pre_trace, float):
-            self.pre_trace = torch.zeros_like(pre_spikes)
+        if isinstance(trace, float):
+            trace = torch.zeros_like(spikes)
         else:
-            self.pre_trace = self.pre_trace * torch.exp(- self.dt / self.latent_pre_tau_s.exp())
+            trace = trace * torch.exp(- self.dt / tau_s)
 
-    def post_trace_decay(self, post_spikes: torch.Tensor) -> None:
-        """
-        Update the post-synaptic eligibility traces.
-
-        Args:
-            post_spikes (torch.Tensor): Tensor of post-synaptic neuron spike activity.
-
-        Returns:
-            None
-        """
-        if isinstance(self.post_trace, float):
-            self.post_trace = torch.zeros_like(post_spikes)
-        else:
-            self.post_trace = self.post_trace * torch.exp(- self.dt / self.latent_post_tau_s.exp())
-
-    def detach_(self):
-        """
-        Detach the attributes pre_trace, post_trace, and attention from their previous history.
-
-        For 'mps:0' device, this method creates a new tensor by detaching it from the current graph.
-        The result will never require gradient. For other devices, this operation will be performed in-place.
-
-        Returns:
-            None
-        """
-
-        if not hasattr(self.pre_trace, '__iter__'):
-            return
-        if self.pre_trace.device == torch.device('mps:0'):  # MPS backend doesn't support .detach_()
-            self.pre_trace = self.pre_trace.detach()
-            self.post_trace = self.post_trace.detach()
-            self.attention = self.attention.detach()
-        else:
-            self.pre_trace.detach_()
-            self.post_trace.detach_()
-            self.attention.detach_()
-
-    def zero_(self):
-        self.pre_trace = 0.
-        self.post_trace = 0.
-        self.attention = 0.
-
+        return trace
 
 class CalciumAttentionLayer(DenseHebbianAttentionLayer):
     def __init__(self,

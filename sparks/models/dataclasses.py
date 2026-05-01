@@ -13,7 +13,6 @@ class HebbianAttentionConfig:
     dt: float = 0.001      # Default value for the time-step in ms
     w_plus: float = 0.001
     alpha: float = 1.1
-    n_heads: int = 1
     data_type: str = 'ephys' # Type of data, can be 'ephys' or 'calcium'
     sliding: bool = False # Whether to use sliding windows
     window_size: int = 1 # The size of the sliding window
@@ -33,7 +32,6 @@ class HebbianAttentionConfig:
             'dt': self.dt,
             'w_plus': self.w_plus,
             'alpha': self.alpha,
-            'n_heads': self.n_heads,
             'data_type': self.data_type,
             'sliding': self.sliding,
             'window_size': self.window_size,
