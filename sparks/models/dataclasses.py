@@ -51,6 +51,7 @@ class AttentionConfig:
     block_class: Type[nn.Module] = AttentionBlock
     n_layers: int = 0
     n_heads: int = 1
+    dropout: float = 0.1
     params: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
@@ -61,6 +62,7 @@ class AttentionConfig:
         # Get all fields except block_class and params itself
         config_params = {
             'n_heads': self.n_heads,
+            'dropout': self.dropout
         }
 
         # Merge with existing params, giving priority to explicitly set params

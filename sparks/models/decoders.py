@@ -60,7 +60,7 @@ class mlp(nn.Module):
     def forward(self, x, sess_id: int = 0) -> torch.Tensor:
         sess_id = str(sess_id)
 
-        x = self.layers(x.flatten(1))
+        x = self.layers(x)
 
         if self.joint_decoder:
             return self.out_layers(x)
@@ -119,7 +119,7 @@ class linear_mlp(nn.Module):
     def forward(self, x, sess_id: int = 0) -> torch.Tensor:
         sess_id = str(sess_id)
 
-        x = self.layers(x.flatten(1))
+        x = self.layers(x)
 
         if self.joint_decoder:
             return self.out_layers(x)
@@ -164,6 +164,6 @@ class linear(nn.Module):
         sess_id = str(sess_id)
 
         if self.joint_decoder:
-            return self.out_layers(x.flatten(1))
+            return self.out_layers(x)
         else:
-            return self.out_layers[sess_id](x.flatten(1))
+            return self.out_layers[sess_id](x)

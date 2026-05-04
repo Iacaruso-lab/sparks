@@ -31,7 +31,7 @@ class HebbianTransformer(nn.Module):
     def __init__(self,
                  n_neurons_per_session: Union[int, List[int]],
                  embed_dim: int,
-                 d_bottleneck: int = 16,
+                 bottleneck_dim: int,
                  output_dim_per_session: Optional[Union[int, List[int]]] = None,
                  id_per_session: Optional[List[Union[str, int]]] = None,
                  hebbian_config: Union[HebbianAttentionConfig, List[HebbianAttentionConfig]] = HebbianAttentionConfig(),
@@ -60,7 +60,7 @@ class HebbianTransformer(nn.Module):
         self.output_dim_map = {session_id: o for session_id, o in zip(self.session_ids, output_dim_per_session)}
         
         self.embed_dim = embed_dim
-        self.d_bottleneck = d_bottleneck
+        self.bottleneck_dim = bottleneck_dim
         self.share_output_head = share_output_head
         self.device = device
 
@@ -74,19 +74,20 @@ class HebbianTransformer(nn.Module):
             ) for i, session_id in enumerate(self.session_ids)
         }).to(self.device)
 
-        self.perceiver = Perceiver(embed_dim=embed_dim, d_bottleneck=d_bottleneck, 
-                                   num_heads=attention_config.params['n_heads']).to(self.device)
-        # self.perceiver = Perceiver(input_dim=n_neurons_per_session[0], d_bottleneck=d_bottleneck).to(self.device)
+        self.perceiver = Perceiver(embed_dim=embed_dim, bottleneck_dim=bottleneck_dim, 
+                                   num_heads=attention_config.params['n_heads'],
+                                   dropout=attention_config.params['dropout']
+                                   ).to(self.device)
 
         # Conventional Attention Blocks (Shared)
         self.conventional_blocks = nn.Sequential(*[
-            attention_config.block_class(d_model=embed_dim * d_bottleneck, **attention_config.params)
+            attention_config.block_class(d_model=embed_dim * bottleneck_dim, **attention_config.params)
             for _ in range(attention_config.n_layers)
         ]).to(self.device)
 
         # 3. Output Projection Heads (Session-specific or Shared)
         self.output_heads = self._create_output_heads()
-        
+
         self.to(device)
 
     def _create_output_head(self, in_dim: int, output_dim: int) -> nn.Module:
@@ -104,12 +105,12 @@ class HebbianTransformer(nn.Module):
             if not all(o == out_dim_list[0] for o in out_dim_list):
                 raise ValueError("To share output heads, all sessions must have the same number of input/output dimensions.")
             
-            shared_head = self._create_output_head(self.embed_dim * self.d_bottleneck, out_dim_list[0])
+            shared_head = self._create_output_head(self.embed_dim * self.bottleneck_dim, out_dim_list[0])
 
             return nn.ModuleDict({session_id: shared_head for session_id in self.session_ids}).to(self.device)
         else:
             return nn.ModuleDict({
-                session_id: self._create_output_head(self.embed_dim * self.d_bottleneck, 
+                session_id: self._create_output_head(self.embed_dim * self.bottleneck_dim, 
                                                      self.output_dim_map[session_id])
 
                 for session_id in self.session_ids
@@ -142,7 +143,7 @@ class HebbianTransformer(nn.Module):
             first_sid = self.session_ids[0]
             new_output_head = self.output_heads[first_sid]
         else:
-            new_output_head = self._create_output_head(in_dim=self.embed_dim * self.d_bottleneck, 
+            new_output_head = self._create_output_head(in_dim=self.embed_dim * self.bottleneck_dim, 
                                                        output_dim=output_dim).to(self.device)
         self.output_heads[sid] = new_output_head
 
@@ -169,10 +170,10 @@ class HebbianTransformer(nn.Module):
         # 1. Hebbian Attention
         h = self.hebbian_blocks[session_id](x.float().to(self.device)) # Shape: [B, T, N, D]
 
-        h = self.perceiver(h) # Shape: [B, T, d_bottleneck * D]
+        h = self.perceiver(h) # Shape: [B, T, bottleneck_dim * D]
 
         # 2. Conventional Attention
-        h = self.conventional_blocks(h) # Shape: [B, T, d_bottleneck * D]
+        h = self.conventional_blocks(h) # Shape: [B, T, bottleneck_dim * D]
 
         # 3. Output Projection
         out = self.output_heads[session_id](h)
@@ -190,22 +191,23 @@ class HebbianTransformer(nn.Module):
 
 
 class Perceiver(nn.Module):
-    def __init__(self, embed_dim, d_bottleneck, num_heads=4):
+    def __init__(self, embed_dim, bottleneck_dim, num_heads=4, dropout=0.1):
         super().__init__()
         self.embed_dim = embed_dim
-        self.d_bottleneck = d_bottleneck
+        self.bottleneck_dim = bottleneck_dim
         self.num_heads = num_heads
         
         assert embed_dim % num_heads == 0, "embed_dim must be divisible by num_heads"
 
         # Learnable latent queries 
-        self.latents = nn.Parameter(torch.empty(d_bottleneck, embed_dim))
+        self.latents = nn.Parameter(torch.empty(bottleneck_dim, embed_dim))
         nn.init.trunc_normal_(self.latents, std=0.02)
         
         # Multi-head cross attention to attend to the neurons
         self.cross_attn = nn.MultiheadAttention(
             embed_dim=embed_dim, 
             num_heads=num_heads, 
+            dropout=dropout,
             batch_first=True
         )
         # Optional: Feedforward network for the latents
@@ -224,11 +226,11 @@ class Perceiver(nn.Module):
         x_flat = x.view(B * T, N, D)
 
         # Expand our learnable latents to match the flattened batch size
-        # Shape: [B*T, d_bottleneck, D]
+        # Shape: [B*T, bottleneck_dim, D]
         latents_expanded = self.latents.unsqueeze(0).expand(B * T, -1, -1)
 
         # Apply Cross Attention: Latents (Q) attend to Neurons (K, V)
-        # Output shape: [B*T, d_bottleneck, D]
+        # Output shape: [B*T, bottleneck_dim, D]
         attn_out, _ = self.cross_attn(
             query=latents_expanded,
             key=x_flat,
@@ -238,36 +240,7 @@ class Perceiver(nn.Module):
         ffn_out = self.ffn(latents_expanded + attn_out)
         out = self.norm(latents_expanded + ffn_out) # Shape: [B*T, K, D]
         
-        out = out.view(B, T, self.d_bottleneck, D)
-        out_flattened = out.view(B, T, self.d_bottleneck * D)
+        out = out.view(B, T, self.bottleneck_dim, D)
+        out_flattened = out.view(B, T, self.bottleneck_dim * D)
         
         return out_flattened        
-        # # Add & Norm
-        # latents_expanded = latents_expanded + attn_out
-        
-        # # Apply FFN
-        # latents_expanded = latents_expanded + self.ffn(latents_expanded)
-
-        # # Reshape back to include the Time dimension
-        # # Shape: [B, T, d_bottleneck, D]
-        # out = latents_expanded.view(B, T, self.d_bottleneck, D)
-
-        # # Flatten the spatial/latent dimension to feed into standard Temporal Transformers
-        # # Shape: [B, T, d_bottleneck * D]
-        # out_flattened = out.view(B, T, self.d_bottleneck * D)
-
-        # return self.norm1(out_flattened)
-
-# class Perceiver(nn.Module):
-#     def __init__(self, input_dim, d_bottleneck):
-#         super().__init__()
-
-#         self.latents = nn.Linear(input_dim, d_bottleneck)
-
-#     def forward(self, x):
-#         """
-#         x: Output from Hebbian Attention layer
-#         Shape: [B, T, N, D] (Batch, Time, Neurons, Embedding)
-#         """
-
-#         return self.latents(x.transpose(3, 2)).flatten(2)

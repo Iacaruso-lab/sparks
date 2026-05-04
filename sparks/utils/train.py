@@ -9,11 +9,11 @@ from sparks.models.sparks import SPARKS
 from sparks.models.transformer import HebbianTransformer
 from sparks.data.providers import StandardTargetProvider, TargetProvider
 
-    
+
 def update_and_reset(model: Union[SPARKS, HebbianTransformer],
                      loss: Any,
                      optimizer: torch.optim.Optimizer,
-                     max_val: float = 0.5):
+                     max_val: float = 0.25):
     """
     Computes clipped gradients, updates the model's weights using the computed loss and the optimizer, 
     and then resets the gradients. This function is typically called after every batch during training.
@@ -69,19 +69,15 @@ def train_on_batch(model: Union[SPARKS, HebbianTransformer],
     beta = kwargs.get('beta', None)
     tau_f = getattr(model, 'tau_f', 1)
 
-    # Number of burn-in timesteps
-
     model.train()
-
-    if hasattr(model, 'encoder'):
-        encoder_outputs = torch.zeros([len(inputs), model.latent_dim, model.tau_p]).to(device)
-    else:
-        encoder_outputs = None
 
     loss = 0
 
-    encoder_outputs, decoder_outputs, mu, logvar = model(inputs, encoder_outputs=encoder_outputs, 
-                                                         session_id=session_id)
+    if tau_f > 1:
+        inputs = inputs[:, :-(tau_f-1)]
+        targets = targets.unfold(dimension=1, size=tau_f, step=1).permute(0, 1, 3, 2).reshape(inputs.shape[0], inputs.shape[1], -1)
+
+    _, decoder_outputs, mu, logvar = model(inputs, session_id=session_id)
 
     if beta is not None:
         loss += kl_loss(decoder_outputs, targets.to(model.device), loss_fn, mu, logvar, beta)

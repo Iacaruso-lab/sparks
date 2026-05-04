@@ -5,6 +5,7 @@ import torch.nn as nn
 
 from sparks.models.dataclasses import HebbianAttentionConfig, AttentionConfig, ProjectionConfig
 from sparks.models.blocks import AttentionBlock
+from sparks.models.transformer import Perceiver
 
 
 class HebbianEncoder(nn.Module):
@@ -33,6 +34,7 @@ class HebbianEncoder(nn.Module):
                  n_neurons_per_session: Union[int, List[int]],
                  embed_dim: int,
                  latent_dim: int,
+                 bottleneck_dim: int,
                  id_per_session: Optional[List[Union[str, int]]] = None,
                  hebbian_config: Union[HebbianAttentionConfig, List[HebbianAttentionConfig]] = HebbianAttentionConfig(),
                  attention_config: AttentionConfig = AttentionConfig(),
@@ -50,12 +52,13 @@ class HebbianEncoder(nn.Module):
         
         self.embed_dim = embed_dim
         self.latent_dim = latent_dim
+        self.bottleneck_dim = bottleneck_dim
         self.share_projection_head = share_projection_head
         self.projection_config = projection_config
         self.device = device
 
         # --- Layer Construction ---
-        # 1. Hebbian Attention Blocks (Session-specific)
+        # Hebbian Attention Blocks (Session-specific)
         self.hebbian_blocks = nn.ModuleDict({
             session_id: hebbian_config[i].block_class(
                 n_neurons=self.n_neurons_map[session_id],
@@ -63,46 +66,35 @@ class HebbianEncoder(nn.Module):
                 **hebbian_config[i].params
             ) for i, session_id in enumerate(self.session_ids)
         })
+    
+        # Perceiver
+        self.perceiver = Perceiver(embed_dim=embed_dim, bottleneck_dim=bottleneck_dim, 
+                                   num_heads=attention_config.params['n_heads'],
+                                   dropout=attention_config.params['dropout']
+                                   ).to(self.device)
 
-        # 2. Conventional Attention Blocks (Shared)
+        # Conventional Attention Blocks (Shared)
         self.conventional_blocks = nn.Sequential(*[
-            attention_config.block_class(embed_dim=embed_dim, **attention_config.params)
+            attention_config.block_class(d_model=embed_dim * bottleneck_dim, **attention_config.params)
             for _ in range(attention_config.n_layers)
         ])
 
-        # 3. Projection Heads (session-specific if sessions do not have the same number of neurons)
-        self.projection_heads = self._create_projection_heads()
-        
+        self.projection_head = self._create_projection_head()
+    
         self.to(device)
 
-    def _create_projection_head(self, n_neurons: int) -> nn.Module:
+    def _create_projection_head(self) -> nn.Module:
         """Factory method to build the projection head."""
         # use a pre-built module if provided
         if self.projection_config.custom_head:
             return self.projection_config.custom_head
 
-        head = nn.Sequential(nn.Flatten())
-        mu_layer = nn.Linear(n_neurons * self.embed_dim, self.latent_dim)
-        logvar_layer = nn.Linear(n_neurons * self.embed_dim, self.latent_dim)
+        mu_layer = nn.Linear(self.bottleneck_dim * self.embed_dim, self.latent_dim)
+        logvar_layer = nn.Linear(self.bottleneck_dim * self.embed_dim, self.latent_dim)
 
         # wrap in a small container module
-        return nn.ModuleDict({'head': head, 'mu': mu_layer, 'logvar': logvar_layer})
+        return nn.ModuleDict({'mu': mu_layer, 'logvar': logvar_layer})
 
-    def _create_projection_heads(self) -> nn.ModuleDict:
-        """Creates projection heads for each session or a single shared one."""
-        if self.share_projection_head:
-            # Check for compatibility
-            neurons_list = list(self.n_neurons_map.values())
-            if not all(n == neurons_list[0] for n in neurons_list):
-                raise ValueError("To share projection heads, all sessions must have the same number of neurons.")
-            
-            shared_head = self._create_projection_head(n_neurons=neurons_list[0])
-            return nn.ModuleDict({session_id: shared_head for session_id in self.session_ids})
-        else:
-            return nn.ModuleDict({
-                session_id: self._create_projection_head(n_neurons=n)
-                for session_id, n in self.n_neurons_map.items()
-            })
 
     def add_neural_block(self, n_neurons: int, session_id: Union[str, int],
                          hebbian_config: Optional[HebbianAttentionConfig] = None):
@@ -137,20 +129,6 @@ class HebbianEncoder(nn.Module):
 
         self.hebbian_blocks[sid] = new_hebbian_block
         
-        # --- 2. Create and Register the New Projection Head ---
-        if self.share_projection_head:
-            # If heads are shared, simply map the new session ID to the existing head.
-            # We can grab the head from the first session in the list.
-            first_sid = self.session_ids[0]
-            new_projection_head = self.projection_heads[first_sid]
-        else:
-            # If heads are session-specific, create a new one using our factory.
-            # This reuses the logic from __init__ without any code duplication.
-            new_projection_head = self._create_projection_head(n_neurons=n_neurons).to(self.device)
-
-        self.projection_heads[sid] = new_projection_head
-
-        # --- 3. Update Internal State ---
         self.session_ids.append(sid)
         self.n_neurons_map[sid] = n_neurons
 
@@ -170,17 +148,17 @@ class HebbianEncoder(nn.Module):
         if session_id not in self.hebbian_blocks:
             raise ValueError(f"Session ID '{session_id}' not found.")
 
-        # 1. Hebbian Attention
-        h = self.hebbian_blocks[session_id](x) # Expected output: (batch, seq_len, embed_dim)
+        # Hebbian Attention
+        h = self.hebbian_blocks[session_id](x)
+        # Perceiver
+        h = self.perceiver(h)
 
-        # 2. Conventional Attention
+        # Conventional Attention
         h = self.conventional_blocks(h)
 
-        # 3. Projection Head
-        projection = self.projection_heads[session_id]
-        z = projection['head'](h)
-        mu = projection['mu'](z)
-        logvar = projection['logvar'](z)
+        # Projection Head
+        mu = self.projection_head['mu'](h)
+        logvar = self.projection_head['logvar'](h)
 
         return mu, logvar
 
@@ -201,32 +179,6 @@ class HebbianEncoder(nn.Module):
         eps = torch.randn_like(std)
 
         return eps * std + mu
-
-    def detach_(self):
-        """
-        Detach the attention layer of each Hebbian attention block from the computational graph.
-
-        No Args.
-
-        No Returns.
-        """
-
-        for session_id in self.session_ids:
-            session_id = str(session_id)
-            self.hebbian_blocks[session_id].detach_()
-
-    def zero_(self):
-        """
-        Resets the values of the attention layer for each Hebbian attention block.
-
-        No Args.
-
-        No Returns.
-        """
-
-        for session_id in self.session_ids:
-            session_id = str(session_id)
-            self.hebbian_blocks[session_id].zero_()
 
 
 class TransformerEncoder(torch.nn.Module):
