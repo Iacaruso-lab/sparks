@@ -4,7 +4,7 @@ import torch
 
 def test_sliding_window_ephys_attention():
     """Test SlidingWindowEphysAttentionLayer"""
-    from sparks.models.sparse_attention import SlidingWindowEphysAttentionLayer
+    from sparks.models.attention.sparse import SlidingWindowEphysAttentionLayer
     
     n_neurons = 100
     embed_dim = 32
@@ -31,7 +31,7 @@ def test_sliding_window_ephys_attention():
 
 def test_sliding_window_calcium_attention():
     """Test SlidingWindowCalciumAttentionLayer"""
-    from sparks.models.sparse_attention import SlidingWindowCalciumAttentionLayer
+    from sparks.models.attention.sparse import SlidingWindowCalciumAttentionLayer
     
     n_neurons = 50
     embed_dim = 16

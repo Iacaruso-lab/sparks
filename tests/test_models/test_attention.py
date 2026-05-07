@@ -3,7 +3,7 @@ import torch
 
 def test_ephys_attention_layer():
     """Test EphysAttentionLayer"""
-    from sparks.models.attention import EphysAttentionLayer
+    from sparks.models.attention.ephys import EphysAttentionLayer
     
     n_neurons = 100
     embed_dim = 64
@@ -34,7 +34,7 @@ def test_ephys_attention_layer():
 
 def test_calcium_attention_layer():
     """Test CalciumAttentionLayer"""
-    from sparks.models.attention import CalciumAttentionLayer
+    from sparks.models.attention.ephys import CalciumAttentionLayer
     
     n_neurons = 50
     embed_dim = 32

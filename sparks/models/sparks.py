@@ -22,9 +22,10 @@ class SPARKS(torch.nn.Module):
                  embed_dim: int,
                  latent_dim: int,
                  bottleneck_dim: int,
-                 id_per_session: Optional[List[Union[str, int]]] = None,
+                 tau_s: float = 1.0,
                  tau_p: int = 1,
                  tau_f: Optional[int] = 1,
+                 id_per_session: Optional[List[Union[str, int]]] = None,
                  hebbian_config: Union[HebbianAttentionConfig, List[HebbianAttentionConfig]] = HebbianAttentionConfig(),
                  attention_config: AttentionConfig = AttentionConfig(),
                  projection_config: ProjectionConfig = ProjectionConfig(),
@@ -38,6 +39,7 @@ class SPARKS(torch.nn.Module):
 
         self.tau_p = tau_p
         self.tau_f = tau_f
+        self.tau_s = tau_s
         self.latent_dim = latent_dim
         self.embed_dim = embed_dim
         self.bottleneck_dim = bottleneck_dim
@@ -55,6 +57,7 @@ class SPARKS(torch.nn.Module):
                                       embed_dim=embed_dim,
                                       latent_dim=latent_dim,
                                       bottleneck_dim=bottleneck_dim,
+                                      tau_s=self.tau_s,
                                       id_per_session=id_per_session,
                                       hebbian_config=hebbian_config,
                                       attention_config=attention_config,

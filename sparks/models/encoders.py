@@ -35,6 +35,7 @@ class HebbianEncoder(nn.Module):
                  embed_dim: int,
                  latent_dim: int,
                  bottleneck_dim: int,
+                 tau_s: float = 1.0,
                  id_per_session: Optional[List[Union[str, int]]] = None,
                  hebbian_config: Union[HebbianAttentionConfig, List[HebbianAttentionConfig]] = HebbianAttentionConfig(),
                  attention_config: AttentionConfig = AttentionConfig(),
@@ -43,7 +44,6 @@ class HebbianEncoder(nn.Module):
                  device: torch.device = torch.device('cpu')):
         super().__init__()
 
-        # --- Parameter Normalization ---
         if isinstance(hebbian_config, HebbianAttentionConfig):
             hebbian_config = [hebbian_config] * len(n_neurons_per_session)
 
@@ -52,23 +52,25 @@ class HebbianEncoder(nn.Module):
         
         self.embed_dim = embed_dim
         self.latent_dim = latent_dim
+        self.tau_s = tau_s
         self.bottleneck_dim = bottleneck_dim
         self.share_projection_head = share_projection_head
         self.projection_config = projection_config
         self.device = device
 
-        # --- Layer Construction ---
         # Hebbian Attention Blocks (Session-specific)
         self.hebbian_blocks = nn.ModuleDict({
             session_id: hebbian_config[i].block_class(
                 n_neurons=self.n_neurons_map[session_id],
                 embed_dim=embed_dim,
+                tau_s=tau_s,
                 **hebbian_config[i].params
             ) for i, session_id in enumerate(self.session_ids)
         })
     
         # Perceiver
-        self.perceiver = Perceiver(embed_dim=embed_dim, bottleneck_dim=bottleneck_dim, 
+        self.perceiver = Perceiver(embed_dim=embed_dim, 
+                                   bottleneck_dim=bottleneck_dim, 
                                    num_heads=attention_config.params['n_heads'],
                                    dropout=attention_config.params['dropout']
                                    ).to(self.device)
@@ -119,7 +121,7 @@ class HebbianEncoder(nn.Module):
         if hebbian_config is None:
             hebbian_config = HebbianAttentionConfig()
 
-        # --- 1. Create and Register the New Hebbian Block ---
+        # Create and Register the New Hebbian Block ---
         # The configuration is inherited from the parent model's setup.
         new_hebbian_block = hebbian_config.block_class(
             n_neurons=n_neurons,

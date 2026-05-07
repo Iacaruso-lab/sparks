@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+import numpy as np
 from typing import Optional, Type, Dict, Any
 from torch import nn
 
@@ -9,7 +10,6 @@ from sparks.models.blocks import HebbianAttentionBlock, AttentionBlock
 class HebbianAttentionConfig:
     """Configuration for the Hebbian Attention Block."""
     block_class: Type[nn.Module] = HebbianAttentionBlock
-    tau_s: float = 1.0  # Default value for the time constant in ms
     dt: float = 0.001      # Default value for the time-step in ms
     w_plus: float = 0.001
     alpha: float = 1.1
@@ -17,8 +17,9 @@ class HebbianAttentionConfig:
     sliding: bool = False # Whether to use sliding windows
     window_size: int = 1 # The size of the sliding window
     block_size: int = 1 # The size of the block for the attention mechanism in sliding mode
-    min_attn_value: float = -0.5
-    max_attn_value: float = 1.5
+    min_attn_value: float = -np.inf # Minimum value for attention coefficients
+    max_attn_value: float = np.inf # Maximum value for attention coefficients
+    config: str = 'light' # 'full', 'light', or 'sparse' to specify the type of Hebbian attention block
     params: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
@@ -28,7 +29,6 @@ class HebbianAttentionConfig:
         """
         # Get all fields except block_class and params itself
         config_params = {
-            'tau_s': self.tau_s,
             'dt': self.dt,
             'w_plus': self.w_plus,
             'alpha': self.alpha,
@@ -38,6 +38,7 @@ class HebbianAttentionConfig:
             'block_size': self.block_size,
             'min_attn_value': self.min_attn_value,
             'max_attn_value': self.max_attn_value,
+            'config': self.config
         }
 
         # Merge with existing params, giving priority to explicitly set params

@@ -1,9 +1,11 @@
-from typing import List, Any, Tuple
+from typing import Tuple
 import numpy as np
 import torch
 from torch.nn import Parameter
 
-from sparks.models.attention import BaseHebbianAttentionLayer, EphysAttentionLayer, CalciumAttentionLayer
+from sparks.models.attention.base import BaseHebbianAttentionLayer
+from sparks.models.attention.ephys import EphysAttentionLayer 
+from sparks.models.attention.calcium import CalciumAttentionLayer
 
 
 class BaseSlidingWindowAttentionLayer(BaseHebbianAttentionLayer):
