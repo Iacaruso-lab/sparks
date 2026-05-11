@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from sparks.models.dataclasses import HebbianAttentionConfig, AttentionConfig
-from sparks.models.utils import FeedForward
+from sparks.models.utils import FeedForward, generate_causal_mask
 
 
 class HebbianTransformer(nn.Module):
@@ -171,13 +171,17 @@ class HebbianTransformer(nn.Module):
         if session_id not in self.hebbian_blocks:
             raise ValueError(f"Session ID '{session_id}' not found.")
 
-        # 1. Hebbian Attention
+        # Hebbian Attention
         h = self.hebbian_blocks[session_id](x.float().to(self.device)) # Shape: [B, T, N, D]
 
+        # Perceiver
         h = self.perceiver(h) # Shape: [B, T, bottleneck_dim * D]
 
-        # 2. Conventional Attention
-        h = self.conventional_blocks(h) # Shape: [B, T, bottleneck_dim * D]
+        # Conventional Attention
+        _, T, _ = h.shape
+        causal_mask = generate_causal_mask(T, self.device)
+        for conv_block in self.conventional_blocks:
+            h = conv_block(h, causal_mask) # Shape: [B, T, bottleneck_dim * D]
 
         # 3. Output Projection
         out = self.output_heads[session_id](h)

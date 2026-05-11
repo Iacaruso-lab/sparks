@@ -17,3 +17,12 @@ class FeedForward(torch.nn.Module):
 
     def forward(self, x):
         return self.net(x)
+
+
+def generate_causal_mask(seq_len, device):
+    """
+    Generates an upper-triangular matrix of -inf, with zeros on the diagonal.
+    Shape: [seq_len, seq_len]
+    """
+    mask = nn.Transformer.generate_square_subsequent_mask(seq_len)
+    return mask.to(device)

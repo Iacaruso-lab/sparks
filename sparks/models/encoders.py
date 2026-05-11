@@ -6,6 +6,7 @@ import torch.nn as nn
 from sparks.models.dataclasses import HebbianAttentionConfig, AttentionConfig, ProjectionConfig
 from sparks.models.blocks import AttentionBlock
 from sparks.models.transformer import Perceiver
+from sparks.models.utils import generate_causal_mask
 
 
 class HebbianEncoder(nn.Module):
@@ -156,7 +157,10 @@ class HebbianEncoder(nn.Module):
         h = self.perceiver(h)
 
         # Conventional Attention
-        h = self.conventional_blocks(h)
+        _, T, _ = h.shape
+        causal_mask = generate_causal_mask(T, self.device)
+        for conv_block in self.conventional_blocks:
+            h = conv_block(h, causal_mask) # Shape: [B, T, bottleneck_dim * D]
 
         # Projection Head
         mu = self.projection_head['mu'](h)
