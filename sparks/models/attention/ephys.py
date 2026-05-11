@@ -83,8 +83,7 @@ class EphysAttentionLayer(DenseHebbianAttentionLayer):
             pre_trace = self.trace_decay(pre_trace, pre_spikes, decay_pre)
             post_trace = self.trace_decay(post_trace, post_spikes, decay_post)
 
-            stdp = (stdp + (1 - stdp) * (pre_trace * post_spikes).view(B, N, N)
-                    - stdp * (post_trace * pre_spikes).view(B, N, N))
+            stdp = stdp + (1 - stdp) * (pre_trace * post_spikes) - stdp * (post_trace * pre_spikes)
 
             pre_trace = self.trace_update(pre_trace, pre_spikes, w_pre)
             post_trace = self.trace_update(post_trace, post_spikes, w_post)
@@ -94,7 +93,8 @@ class EphysAttentionLayer(DenseHebbianAttentionLayer):
     
             stdp_history.append(stdp.unsqueeze(1))
 
-        return self.v_proj(torch.concatenate(stdp_history, dim=1))
+        stdp_history = torch.concatenate(stdp_history, dim=1)
+        return self.v_proj(stdp_history)
 
     def trace_decay(self, trace: torch.Tensor, spikes: torch.Tensor, decay: float) -> torch.Tensor:
         """
