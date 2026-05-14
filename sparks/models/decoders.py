@@ -5,8 +5,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from sparks.models.dataclasses import HebbianAttentionConfig, AttentionConfig
-
 
 class mlp(nn.Module):
     def __init__(self,

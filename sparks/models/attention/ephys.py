@@ -84,6 +84,7 @@ class EphysAttentionLayer(DenseHebbianAttentionLayer):
             post_trace = self.trace_decay(post_trace, post_spikes, decay_post)
 
             stdp = stdp + (1 - stdp) * (pre_trace * post_spikes) - stdp * (post_trace * pre_spikes)
+            stdp.clamp_(-0.5, 1.5) # Clamping to prevent extreme values
 
             pre_trace = self.trace_update(pre_trace, pre_spikes, w_pre)
             post_trace = self.trace_update(post_trace, post_spikes, w_post)

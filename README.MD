@@ -45,3 +45,5 @@ Available now on [BiorXiv](https://www.biorxiv.org/content/10.1101/2024.08.13.60
 
 # License
 - SPARKS is an open source software under a GLPv3 license.
+
+# NOTE: Mamba install requires `ninja`

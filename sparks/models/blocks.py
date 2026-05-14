@@ -1,3 +1,4 @@
+# from mamba_ssm import Mamba
 import numpy as np
 from torch import nn
 
@@ -91,31 +92,9 @@ class HebbianAttentionBlock(nn.Module):
 
         return x  # [B, T, N, embed_dim]
 
-    def detach_(self):
-        """
-        Detach the attention layer in the block from the computational graph.
-
-        No Args.
-
-        No Returns.
-        """
-
-        self.attention_layer.detach_()
-
-    def zero_(self):
-        """
-        Resets the values of the attention layer in the current block.
-
-        No Args.
-
-        No Returns.
-        """
-
-        self.attention_layer.zero_()
-
 
 class AttentionBlock(nn.Module):
-    def __init__(self, d_model, n_heads, dropout=0.1):
+    def __init__(self, d_model, n_heads, dropout=0.1, **kwargs):
         super().__init__()
         
         self.self_attn = nn.MultiheadAttention(
@@ -146,3 +125,32 @@ class AttentionBlock(nn.Module):
         
         return x
     
+
+# class MambaBlock(nn.Module):
+#     def __init__(self, d_model, d_state=16, d_conv=4, expand=2, **kwargs):
+#         """
+#         Args:
+#             d_model: The embedding dimension coming from the Perceiver (K * D)
+#             d_state: The size of the hidden SSM state (usually 16 or 64)
+#             d_conv: Width of the local 1D convolution (usually 4)
+#             expand: Expansion factor for the inner linear projections (usually 2)
+#         """
+
+#         super().__init__()
+    
+#         self.mamba = Mamba(
+#             d_model=d_model,
+#             d_state=d_state,
+#             d_conv=d_conv,
+#             expand=expand,
+#         )
+
+#         self.norm = nn.LayerNorm(d_model)
+
+#     def forward(self, x):
+#         """
+#         x: [B, T, d_model] 
+#         """
+
+#         out = self.mamba(self.norm(x))
+#         return x + out

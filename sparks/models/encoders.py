@@ -3,7 +3,7 @@ from typing import List, Union, Optional, Tuple
 import torch
 import torch.nn as nn
 
-from sparks.models.dataclasses import HebbianAttentionConfig, AttentionConfig, ProjectionConfig
+from sparks.models.dataclasses import HebbianAttentionConfig, ConvConfig, ProjectionConfig
 from sparks.models.blocks import AttentionBlock
 from sparks.models.transformer import Perceiver
 from sparks.models.utils import generate_causal_mask
@@ -39,7 +39,7 @@ class HebbianEncoder(nn.Module):
                  tau_s: float = 1.0,
                  id_per_session: Optional[List[Union[str, int]]] = None,
                  hebbian_config: Union[HebbianAttentionConfig, List[HebbianAttentionConfig]] = HebbianAttentionConfig(),
-                 attention_config: AttentionConfig = AttentionConfig(),
+                 conv_config: ConvConfig = ConvConfig(),
                  projection_config: ProjectionConfig = ProjectionConfig(),
                  share_projection_head: bool = False,
                  device: torch.device = torch.device('cpu')):
@@ -72,14 +72,13 @@ class HebbianEncoder(nn.Module):
         # Perceiver
         self.perceiver = Perceiver(embed_dim=embed_dim, 
                                    bottleneck_dim=bottleneck_dim, 
-                                   num_heads=attention_config.params['n_heads'],
-                                   dropout=attention_config.params['dropout']
+                                   dropout=conv_config.params['dropout']
                                    ).to(self.device)
 
-        # Conventional Attention Blocks (Shared)
+        # Conventional Blocks (Shared)
         self.conventional_blocks = nn.Sequential(*[
-            attention_config.block_class(d_model=embed_dim * bottleneck_dim, **attention_config.params)
-            for _ in range(attention_config.n_layers)
+            conv_config.block_class(d_model=embed_dim * bottleneck_dim, **conv_config.params)
+            for _ in range(conv_config.n_layers)
         ])
 
         self.projection_head = self._create_projection_head()
@@ -231,9 +230,3 @@ class TransformerEncoder(torch.nn.Module):
         eps = torch.randn_like(std)
 
         return eps * std + mu
-
-    def detach_(self):
-        self.layers[1].detach_()
-
-    def zero_(self):
-        self.layers[1].zero_()

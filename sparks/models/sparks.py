@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import numpy as np
 
 from sparks.models.encoders import HebbianEncoder
-from sparks.models.dataclasses import HebbianAttentionConfig, AttentionConfig, ProjectionConfig
+from sparks.models.dataclasses import HebbianAttentionConfig, ConvConfig, ProjectionConfig
 from sparks.models.decoders import mlp
 
 
@@ -27,7 +27,7 @@ class SPARKS(torch.nn.Module):
                  tau_f: Optional[int] = 1,
                  id_per_session: Optional[List[Union[str, int]]] = None,
                  hebbian_config: Union[HebbianAttentionConfig, List[HebbianAttentionConfig]] = HebbianAttentionConfig(),
-                 attention_config: AttentionConfig = AttentionConfig(),
+                 conv_config: ConvConfig = ConvConfig(),
                  projection_config: ProjectionConfig = ProjectionConfig(),
                  share_projection_head: bool = False,
                  decoder: Optional[torch.nn.Module] = None,
@@ -60,7 +60,7 @@ class SPARKS(torch.nn.Module):
                                       tau_s=self.tau_s,
                                       id_per_session=id_per_session,
                                       hebbian_config=hebbian_config,
-                                      attention_config=attention_config,
+                                      conv_config=conv_config,
                                       projection_config=projection_config,
                                       share_projection_head=share_projection_head,
                                       device=device)

@@ -47,12 +47,20 @@ class HebbianAttentionConfig:
 
 
 @dataclass
-class AttentionConfig:
-    """Configuration for the Conventional Attention Blocks."""
+class ConvConfig:
+    """Configuration for the Conventional Blocks."""
     block_class: Type[nn.Module] = AttentionBlock
     n_layers: int = 0
+
+    # Parameters for the attention block (if used)
     n_heads: int = 1
     dropout: float = 0.1
+
+    # Parameters for Mamba
+    d_state: int = 16
+    d_conv: int = 4
+    expand: int = 2
+
     params: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
@@ -63,7 +71,10 @@ class AttentionConfig:
         # Get all fields except block_class and params itself
         config_params = {
             'n_heads': self.n_heads,
-            'dropout': self.dropout
+            'dropout': self.dropout,
+            'd_state': self.d_state,
+            'd_conv': self.d_conv,
+            'expand': self.expand
         }
 
         # Merge with existing params, giving priority to explicitly set params

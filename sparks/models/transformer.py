@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from sparks.models.dataclasses import HebbianAttentionConfig, AttentionConfig
+from sparks.models.dataclasses import HebbianAttentionConfig, ConvConfig
 from sparks.models.utils import FeedForward, generate_causal_mask
 
 
@@ -36,7 +36,7 @@ class HebbianTransformer(nn.Module):
                  output_dim_per_session: Optional[Union[int, List[int]]] = None,
                  id_per_session: Optional[List[Union[str, int]]] = None,
                  hebbian_config: Union[HebbianAttentionConfig, List[HebbianAttentionConfig]] = HebbianAttentionConfig(),
-                 attention_config: AttentionConfig = AttentionConfig(),
+                 conv_config: ConvConfig = ConvConfig(),
                  share_output_head: bool = False,
                  device: torch.device = torch.device('cpu')):
         super().__init__()
@@ -78,14 +78,14 @@ class HebbianTransformer(nn.Module):
         }).to(self.device)
 
         self.perceiver = Perceiver(embed_dim=embed_dim, bottleneck_dim=bottleneck_dim, 
-                                   num_heads=attention_config.params['n_heads'],
-                                   dropout=attention_config.params['dropout']
+                                   num_heads=conv_config.params['n_heads'],
+                                   dropout=conv_config.params['dropout']
                                    ).to(self.device)
 
-        # Conventional Attention Blocks (Shared)
+        # Conventional Blocks (Shared)
         self.conventional_blocks = nn.Sequential(*[
-            attention_config.block_class(d_model=embed_dim * bottleneck_dim, **attention_config.params)
-            for _ in range(attention_config.n_layers)
+            conv_config.block_class(d_model=embed_dim * bottleneck_dim, **conv_config.params)
+            for _ in range(conv_config.n_layers)
         ]).to(self.device)
 
         # 3. Output Projection Heads (Session-specific or Shared)
