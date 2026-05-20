@@ -6,6 +6,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+from sparks.models.blocks import AttentionBlock
+
 class mlp(nn.Module):
     def __init__(self,
                  in_dim: int,
@@ -64,6 +66,7 @@ class mlp(nn.Module):
             return self.out_layers(x)
         else:
             return self.out_layers[sess_id](x)
+        
 
 
 class linear_mlp(nn.Module):
@@ -165,3 +168,38 @@ class linear(nn.Module):
             return self.out_layers(x)
         else:
             return self.out_layers[sess_id](x)
+        
+
+# class transformer(nn.Module):
+#     def __init__(self, 
+#                  embed_dim: int,
+#                  output_dim_per_session: Any,
+#                  n_layers: int = 1,
+#                  n_heads: int = 1,
+#                  dropout: float = 0.,
+#                  id_per_session: Any = None,
+#                  joint_decoder: bool = False):
+#         super().__init__()
+
+#         self.attention_layers = nn.ModuleList([AttentionBlock(embed_dim=embed_dim, 
+#                                                               n_heads=n_heads, 
+#                                                               dropout=dropout) for _ in range(n_layers)])
+#         self.ff = ff_class(**kwargs)
+#         self.norm = norm_class(**kwargs)
+#         self.perceiver = perceiver_class(**kwargs)
+
+#     def forward(self, x):
+#         """
+#         Forward pass through the full transformer decoder block.
+
+#         Args:
+#             x (torch.Tensor): Input tensor. Shape: (batch, seq_len, n_neurons).
+#         Returns:
+#             torch.Tensor: Output tensor after passing through the attention layer, feedforward network, and perceiver block.
+#         """
+#         x = self.attention_layer(x) 
+#         ffn_out = self.ff(x)
+#         x = self.norm(x + ffn_out)
+#         x = self.perceiver(x)
+
+#         return x  # [B, T, bottleneck_dim * embed_dim]

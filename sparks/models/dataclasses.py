@@ -10,6 +10,8 @@ from sparks.models.blocks import HebbianAttentionBlock, AttentionBlock
 class HebbianAttentionConfig:
     """Configuration for the Hebbian Attention Block."""
     block_class: Type[nn.Module] = HebbianAttentionBlock
+    tau_s: float = 1.0
+    dropout: float = 0.
     dt: float = 0.001      # Default value for the time-step in ms
     w_plus: float = 0.001
     alpha: float = 1.1
@@ -30,6 +32,7 @@ class HebbianAttentionConfig:
         # Get all fields except block_class and params itself
         config_params = {
             'dt': self.dt,
+            'tau_s': self.tau_s,
             'w_plus': self.w_plus,
             'alpha': self.alpha,
             'data_type': self.data_type,
@@ -54,7 +57,7 @@ class ConvConfig:
 
     # Parameters for the attention block (if used)
     n_heads: int = 1
-    dropout: float = 0.1
+    dropout: float = 0.
 
     # Parameters for Mamba
     d_state: int = 16

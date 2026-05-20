@@ -69,12 +69,30 @@ class EphysAttentionLayer(DenseHebbianAttentionLayer):
             The size of the output tensor is [batch_size, len(n_neurons), embed_dim].
         """
 
+        stdp_history = self.stdp_coefficients(spikes)
+        return self.v_proj(stdp_history)
+    
+    def stdp_coefficients(self, spikes: torch.Tensor) -> torch.Tensor:
+        """
+        Compute the STDP coefficients for a given input spike tensor.
+
+        This method allows for retrieving the raw STDP coefficients without applying the final linear transformation,
+        which can be useful for analysis or ablation studies.
+
+        Args:
+            spikes (torch.Tensor): Tensor representation of the spikes from the neurons.
+                                    It should be of shape [n_total_neurons, n_timesteps].
+
+        Returns:
+            torch.Tensor: The STDP coefficients tensor.
+        """
         stdp_history = []
         B, T, N = spikes.shape
 
-        stdp = 0.
-        pre_trace = 0.
-        post_trace = 0.
+        stdp = torch.zeros(B, N, N, device=spikes.device)  # Initialize STDP coefficients tensor
+        ones = torch.ones_like(stdp, device=spikes.device)  # Tensor of ones for the update rule
+        pre_trace = torch.zeros(B, 1, N, device=spikes.device)  # Initialize pre-synaptic trace
+        post_trace = torch.zeros(B, N, 1, device=spikes.device)  # Initialize post-synaptic trace
 
         decay_pre, decay_post, w_pre, w_post = self.get_parameters()
 
@@ -83,7 +101,7 @@ class EphysAttentionLayer(DenseHebbianAttentionLayer):
             pre_trace = self.trace_decay(pre_trace, pre_spikes, decay_pre)
             post_trace = self.trace_decay(post_trace, post_spikes, decay_post)
 
-            stdp = stdp + (1 - stdp) * (pre_trace * post_spikes) - stdp * (post_trace * pre_spikes)
+            stdp = stdp + (ones - stdp) * (pre_trace * post_spikes) - stdp * (post_trace * pre_spikes)
             stdp.clamp_(-0.5, 1.5) # Clamping to prevent extreme values
 
             pre_trace = self.trace_update(pre_trace, pre_spikes, w_pre)
@@ -95,7 +113,7 @@ class EphysAttentionLayer(DenseHebbianAttentionLayer):
             stdp_history.append(stdp.unsqueeze(1))
 
         stdp_history = torch.concatenate(stdp_history, dim=1)
-        return self.v_proj(stdp_history)
+        return stdp_history
 
     def trace_decay(self, trace: torch.Tensor, spikes: torch.Tensor, decay: float) -> torch.Tensor:
         """
@@ -110,10 +128,7 @@ class EphysAttentionLayer(DenseHebbianAttentionLayer):
             torch.Tensor: The updated eligibility trace.
         """
 
-        if isinstance(trace, float):
-            trace = torch.zeros_like(spikes)
-        else:
-            trace = trace * decay
+        trace = trace * decay
 
         return trace
     
@@ -281,8 +296,8 @@ class LightEphysAttentionLayer(EphysAttentionLayer):
         """
         retrieve the positive parameters during forward pass
         """
-        decay_pre = np.exp(-self.dt / self.tau_s)
-        decay_post = np.exp(-self.dt / self.tau_s)
+        decay_pre = torch.exp(-self.dt / self.tau_s)
+        decay_post = torch.exp(-self.dt / self.tau_s)
 
         w_pre = self.w_plus
         w_post = self.w_plus * self.alpha

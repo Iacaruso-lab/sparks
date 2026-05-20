@@ -22,7 +22,6 @@ class SPARKS(torch.nn.Module):
                  embed_dim: int,
                  latent_dim: int,
                  bottleneck_dim: int,
-                 tau_s: float = 1.0,
                  tau_p: int = 1,
                  tau_f: Optional[int] = 1,
                  id_per_session: Optional[List[Union[str, int]]] = None,
@@ -39,7 +38,6 @@ class SPARKS(torch.nn.Module):
 
         self.tau_p = tau_p
         self.tau_f = tau_f
-        self.tau_s = tau_s
         self.latent_dim = latent_dim
         self.embed_dim = embed_dim
         self.bottleneck_dim = bottleneck_dim
@@ -57,7 +55,6 @@ class SPARKS(torch.nn.Module):
                                       embed_dim=embed_dim,
                                       latent_dim=latent_dim,
                                       bottleneck_dim=bottleneck_dim,
-                                      tau_s=self.tau_s,
                                       id_per_session=id_per_session,
                                       hebbian_config=hebbian_config,
                                       conv_config=conv_config,
@@ -170,6 +167,21 @@ class SPARKS(torch.nn.Module):
         z_flat = z_reordered.view(B, T, self.tau_p * D)
         
         return z_flat
+    
+    def hebbian_forward(self, x: torch.Tensor, session_id: Union[str, int]) -> torch.Tensor:
+        """
+        Forward pass through only the Hebbian attention block for a given session.
+
+        This method allows for isolating the contribution of the Hebbian attention mechanism,
+        which can be useful for analysis or ablation studies.
+
+        Args:
+            x (torch.Tensor): Input tensor. Shape: (batch, n_neurons) or (batch, seq_len, n_neurons).
+            session_id (Union[str, int]): The identifier for the session being processed.
+        Returns:
+            torch.Tensor: The stdp coefficients tensor from the Hebbian attention block.
+        """
+        return self.encoder.hebbian_forward(x, session_id)
 
     def add_session(self, n_neurons: int, session_id: Union[str, int],
                     hebbian_config: Optional[HebbianAttentionConfig] = None,

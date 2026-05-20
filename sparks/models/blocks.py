@@ -1,6 +1,7 @@
 # from mamba_ssm import Mamba
 import numpy as np
 from torch import nn
+import torch
 
 from sparks.models.attention.ephys import FullEphysAttentionLayer, LightEphysAttentionLayer
 from sparks.models.attention.calcium import FullCalciumAttentionLayer, LightCalciumAttentionLayer
@@ -18,7 +19,9 @@ CONFIG_DICT = {'ephys': {'full': FullEphysAttentionLayer,
 class HebbianAttentionBlock(nn.Module):
     def __init__(self, 
                  n_neurons: int,
-                 embed_dim: int, 
+                 embed_dim: int,
+                 bottleneck_dim: int,
+                 dropout: float = 0.,
                  tau_s: float = 1.0,
                  dt: float = 0.001,
                  w_plus: float = 0.001,
@@ -74,10 +77,16 @@ class HebbianAttentionBlock(nn.Module):
                                                  sliding=sliding,
                                                  window_size=window_size,
                                                  block_size=block_size)
-        
         self.ff = FeedForward(embed_dim)
         self.embed_dim = embed_dim
         self.norm = nn.LayerNorm(embed_dim)
+
+        # Perceiver
+        self.perceiver = PerceiverBlock(n_neurons=n_neurons,
+                                         embed_dim=embed_dim, 
+                                         bottleneck_dim=bottleneck_dim, 
+                                         dropout=dropout)
+
 
     def forward(self, x):
         """
@@ -90,7 +99,21 @@ class HebbianAttentionBlock(nn.Module):
         ffn_out = self.ff(x)
         x = self.norm(x + ffn_out)
 
-        return x  # [B, T, N, embed_dim]
+        # Perceiver
+        x = self.perceiver(x)
+
+        return x  # [B, T, bottleneck_dim * embed_dim]
+    
+    def hebbian_forward(self, x):
+        """
+        Forward pass through the Hebbian attention layer only, to extract the stdp coefficients for analysis.
+
+        Args:
+            x (torch.Tensor): Input tensor. Shape: (batch, seq_len, n_neurons).
+        Returns:
+            torch.Tensor: The stdp coefficients tensor from the Hebbian attention layer.
+        """
+        return self.attention_layer.stdp_coefficients(x)
 
 
 class AttentionBlock(nn.Module):
@@ -119,13 +142,78 @@ class AttentionBlock(nn.Module):
             need_weights=False, 
             attn_mask=mask
         )
+
+        x = x + attn_out 
+        ffn_out = self.ffn(x)
         
-        ffn_out = self.ffn(x + attn_out)
-        x = self.norm(x + ffn_out)
-        
-        return x
+        return x + ffn_out
     
 
+class PerceiverBlock(nn.Module):
+    def __init__(self, n_neurons, embed_dim, bottleneck_dim, num_heads=4, dropout=0.1):
+        super().__init__()
+        self.n_neurons = n_neurons
+        self.embed_dim = embed_dim
+        self.bottleneck_dim = bottleneck_dim
+        self.num_heads = num_heads
+        
+        assert embed_dim % num_heads == 0, "embed_dim must be divisible by num_heads"
+
+        # Learnable latent queries 
+        self.latents = nn.Parameter(torch.empty(1, bottleneck_dim, embed_dim))
+        nn.init.trunc_normal_(self.latents, std=0.02)
+        self.norm_latents = nn.LayerNorm(embed_dim)
+
+        # Learnable positional embeddings for the neurons
+        self.spatial_pos_embed = nn.Parameter(torch.empty(1, 1, self.n_neurons, self.embed_dim))
+        nn.init.trunc_normal_(self.spatial_pos_embed, std=0.02)
+        
+        # Multi-head cross attention to attend to the neurons
+        self.cross_attn = nn.MultiheadAttention(
+            embed_dim=embed_dim, 
+            num_heads=num_heads, 
+            dropout=dropout,
+            batch_first=True
+        )
+        # Optional: Feedforward network for the latents
+        self.ffn = FeedForward(embed_dim)
+        self.norm1 = nn.LayerNorm(embed_dim)
+        self.norm2 = nn.LayerNorm(embed_dim)
+
+    def forward(self, x):
+        """
+        x: Output from Hebbian Attention layer
+        Shape: [B, T, N, D] (Batch, Time, Neurons, Embedding)
+        """
+        B, T, N, D = x.shape
+
+        x = self.norm1(x + self.spatial_pos_embed)
+        # Flatten B and T to process all time steps independently in parallel
+        # Shape becomes: [B*T, N, D]
+        x_flat = x.view(B * T, N, D)
+
+        # Expand learnable latents to match the flattened batch size
+        # Shape: [B*T, bottleneck_dim, D]
+        latents_expanded = self.latents.expand(B * T, -1, -1)  # Shape: [B*T, bottleneck_dim, D]
+        latents_norm = self.norm_latents(latents_expanded)  # Normalize latents before attention
+
+        # Apply Cross Attention: Latents (Q) attend to Neurons (K, V)
+        # Output shape: [B*T, bottleneck_dim, D]
+        attn_out, _ = self.cross_attn(
+            query=latents_norm,
+            key=x_flat,
+            value=x_flat
+        )
+    
+        x = attn_out + latents_expanded  # Residual connection around cross attention
+        ffn_out = self.ffn(x)  # Shape: [B*T, bottleneck_dim, D]
+        out = self.norm2(x + ffn_out).view(B, T, self.bottleneck_dim * D) # Shape: [B,T, K * D]
+
+        # ffn_out = self.ffn(attn_out)  # Shape: [B*T, bottleneck_dim, D]
+        # out = self.norm2(attn_out + ffn_out).view(B, T, self.bottleneck_dim * D) # Shape: [B,T, K * D]
+        
+        return out
+        
 # class MambaBlock(nn.Module):
 #     def __init__(self, d_model, d_state=16, d_conv=4, expand=2, **kwargs):
 #         """

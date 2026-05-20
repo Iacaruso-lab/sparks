@@ -5,7 +5,6 @@ import torch.nn as nn
 
 from sparks.models.dataclasses import HebbianAttentionConfig, ConvConfig, ProjectionConfig
 from sparks.models.blocks import AttentionBlock
-from sparks.models.transformer import Perceiver
 from sparks.models.utils import generate_causal_mask
 
 
@@ -36,7 +35,6 @@ class HebbianEncoder(nn.Module):
                  embed_dim: int,
                  latent_dim: int,
                  bottleneck_dim: int,
-                 tau_s: float = 1.0,
                  id_per_session: Optional[List[Union[str, int]]] = None,
                  hebbian_config: Union[HebbianAttentionConfig, List[HebbianAttentionConfig]] = HebbianAttentionConfig(),
                  conv_config: ConvConfig = ConvConfig(),
@@ -53,7 +51,6 @@ class HebbianEncoder(nn.Module):
         
         self.embed_dim = embed_dim
         self.latent_dim = latent_dim
-        self.tau_s = tau_s
         self.bottleneck_dim = bottleneck_dim
         self.share_projection_head = share_projection_head
         self.projection_config = projection_config
@@ -64,17 +61,11 @@ class HebbianEncoder(nn.Module):
             session_id: hebbian_config[i].block_class(
                 n_neurons=self.n_neurons_map[session_id],
                 embed_dim=embed_dim,
-                tau_s=tau_s,
+                bottleneck_dim=bottleneck_dim,
                 **hebbian_config[i].params
             ) for i, session_id in enumerate(self.session_ids)
         })
     
-        # Perceiver
-        self.perceiver = Perceiver(embed_dim=embed_dim, 
-                                   bottleneck_dim=bottleneck_dim, 
-                                   dropout=conv_config.params['dropout']
-                                   ).to(self.device)
-
         # Conventional Blocks (Shared)
         self.conventional_blocks = nn.Sequential(*[
             conv_config.block_class(d_model=embed_dim * bottleneck_dim, **conv_config.params)
@@ -126,6 +117,7 @@ class HebbianEncoder(nn.Module):
         new_hebbian_block = hebbian_config.block_class(
             n_neurons=n_neurons,
             embed_dim=self.embed_dim,
+            bottleneck_dim=self.bottleneck_dim,
             **hebbian_config.params
         ).to(self.device)
 
@@ -152,8 +144,6 @@ class HebbianEncoder(nn.Module):
 
         # Hebbian Attention
         h = self.hebbian_blocks[session_id](x)
-        # Perceiver
-        h = self.perceiver(h)
 
         # Conventional Attention
         _, T, _ = h.shape
@@ -185,6 +175,27 @@ class HebbianEncoder(nn.Module):
 
         return eps * std + mu
 
+    def hebbian_forward(self, x: torch.Tensor, session_id: Union[str, int]) -> torch.Tensor:
+        """
+        Forward pass through only the Hebbian attention block for a given session.
+
+        This method allows for isolating the contribution of the Hebbian attention mechanism,
+        which can be useful for analysis or ablation studies.
+
+        Args:
+            x (torch.Tensor): Input tensor. Shape: (batch, n_neurons) or (batch, seq_len, n_neurons).
+            session_id (Union[str, int]): The identifier for the session being processed.
+
+        Returns:
+            torch.Tensor: The stdp coefficients tensor from the Hebbian attention block.
+        """
+
+        session_id = str(session_id)
+        if session_id not in self.hebbian_blocks:
+            raise ValueError(f"Session ID '{session_id}' not found.")
+
+        return self.hebbian_blocks[session_id].hebbian_forward(x)
+
 
 class TransformerEncoder(torch.nn.Module):
     """
@@ -196,7 +207,6 @@ class TransformerEncoder(torch.nn.Module):
         :param n_inputs: number of input neurons
         :param hidden_dims:
         :param latent_dim:
-        :param tau_s: time constant for the attention
         :param device: device to use
         """
 

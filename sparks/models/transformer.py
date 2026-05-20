@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from sparks.models.dataclasses import HebbianAttentionConfig, ConvConfig
-from sparks.models.utils import FeedForward, generate_causal_mask
+from sparks.models.utils import generate_causal_mask
 
 
 class HebbianTransformer(nn.Module):
@@ -32,7 +32,6 @@ class HebbianTransformer(nn.Module):
                  n_neurons_per_session: Union[int, List[int]],
                  embed_dim: int,
                  bottleneck_dim: int,
-                 tau_s: float = 1.0,
                  output_dim_per_session: Optional[Union[int, List[int]]] = None,
                  id_per_session: Optional[List[Union[str, int]]] = None,
                  hebbian_config: Union[HebbianAttentionConfig, List[HebbianAttentionConfig]] = HebbianAttentionConfig(),
@@ -62,7 +61,6 @@ class HebbianTransformer(nn.Module):
         
         self.embed_dim = embed_dim
         self.bottleneck_dim = bottleneck_dim
-        self.tau_s = tau_s
         self.share_output_head = share_output_head
         self.device = device
 
@@ -72,15 +70,10 @@ class HebbianTransformer(nn.Module):
             session_id: hebbian_config[i].block_class(
                 n_neurons=self.n_neurons_map[session_id],
                 embed_dim=embed_dim,
-                tau_s=tau_s,
+                bottleneck_dim=bottleneck_dim,
                 **hebbian_config[i].params
             ) for i, session_id in enumerate(self.session_ids)
         }).to(self.device)
-
-        self.perceiver = Perceiver(embed_dim=embed_dim, bottleneck_dim=bottleneck_dim, 
-                                   num_heads=conv_config.params['n_heads'],
-                                   dropout=conv_config.params['dropout']
-                                   ).to(self.device)
 
         # Conventional Blocks (Shared)
         self.conventional_blocks = nn.Sequential(*[
@@ -174,9 +167,6 @@ class HebbianTransformer(nn.Module):
         # Hebbian Attention
         h = self.hebbian_blocks[session_id](x.float().to(self.device)) # Shape: [B, T, N, D]
 
-        # Perceiver
-        h = self.perceiver(h) # Shape: [B, T, bottleneck_dim * D]
-
         # Conventional Attention
         _, T, _ = h.shape
         causal_mask = generate_causal_mask(T, self.device)
@@ -197,58 +187,3 @@ class HebbianTransformer(nn.Module):
         for session_id in self.session_ids:
             self.hebbian_blocks[session_id].zero_()
 
-
-class Perceiver(nn.Module):
-    def __init__(self, embed_dim, bottleneck_dim, num_heads=4, dropout=0.1):
-        super().__init__()
-        self.embed_dim = embed_dim
-        self.bottleneck_dim = bottleneck_dim
-        self.num_heads = num_heads
-        
-        assert embed_dim % num_heads == 0, "embed_dim must be divisible by num_heads"
-
-        # Learnable latent queries 
-        self.latents = nn.Parameter(torch.empty(bottleneck_dim, embed_dim))
-        nn.init.trunc_normal_(self.latents, std=0.02)
-        
-        # Multi-head cross attention to attend to the neurons
-        self.cross_attn = nn.MultiheadAttention(
-            embed_dim=embed_dim, 
-            num_heads=num_heads, 
-            dropout=dropout,
-            batch_first=True
-        )
-        # Optional: Feedforward network for the latents
-        self.ffn = FeedForward(embed_dim)
-        self.norm = nn.LayerNorm(embed_dim)
-
-    def forward(self, x):
-        """
-        x: Output from Hebbian Attention layer
-        Shape: [B, T, N, D] (Batch, Time, Neurons, Embedding)
-        """
-        B, T, N, D = x.shape
-
-        # Flatten B and T to process all time steps independently in parallel
-        # Shape becomes: [B*T, N, D]
-        x_flat = x.view(B * T, N, D)
-
-        # Expand our learnable latents to match the flattened batch size
-        # Shape: [B*T, bottleneck_dim, D]
-        latents_expanded = self.latents.unsqueeze(0).expand(B * T, -1, -1)
-
-        # Apply Cross Attention: Latents (Q) attend to Neurons (K, V)
-        # Output shape: [B*T, bottleneck_dim, D]
-        attn_out, _ = self.cross_attn(
-            query=latents_expanded,
-            key=x_flat,
-            value=x_flat
-        )
-        
-        ffn_out = self.ffn(latents_expanded + attn_out)
-        out = self.norm(latents_expanded + ffn_out) # Shape: [B*T, K, D]
-        
-        out = out.view(B, T, self.bottleneck_dim, D)
-        out_flattened = out.view(B, T, self.bottleneck_dim * D)
-        
-        return out_flattened        

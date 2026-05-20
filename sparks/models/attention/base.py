@@ -29,10 +29,10 @@ class BaseHebbianAttentionLayer(nn.Module):
         super().__init__()
         self.n_neurons = n_neurons
         self.embed_dim = embed_dim
-        self.tau_s = tau_s
-        self.dt = dt
-        self.w_plus = w_plus
-        self.alpha = alpha
+        self.tau_s = torch.nn.Parameter(torch.tensor(tau_s, dtype=torch.float32), requires_grad=False)
+        self.dt = torch.nn.Parameter(torch.tensor(dt, dtype=torch.float32), requires_grad=False)
+        self.w_plus = torch.nn.Parameter(torch.tensor(w_plus, dtype=torch.float32), requires_grad=False)
+        self.alpha = torch.nn.Parameter(torch.tensor(alpha, dtype=torch.float32), requires_grad=False)
 
     def forward(self, spikes: torch.Tensor) -> torch.Tensor:
         """
