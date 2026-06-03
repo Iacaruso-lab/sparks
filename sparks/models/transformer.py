@@ -177,13 +177,23 @@ class HebbianTransformer(nn.Module):
         out = self.output_heads[session_id](h)
         return None, out, None, None
 
-    def detach_(self):
-        """Detach the attention layer of each Hebbian attention block from the computational graph."""
-        for session_id in self.session_ids:
-            self.hebbian_blocks[session_id].detach_()
+    def hebbian_forward(self, x: torch.Tensor, session_id: Union[str, int]) -> torch.Tensor:
+        """
+        Forward pass through only the Hebbian attention block for a given session.
 
-    def zero_(self):
-        """Resets the values of the attention layer for each Hebbian attention block."""
-        for session_id in self.session_ids:
-            self.hebbian_blocks[session_id].zero_()
+        This method allows for isolating the contribution of the Hebbian attention mechanism,
+        which can be useful for analysis or ablation studies.
 
+        Args:
+            x (torch.Tensor): Input tensor. Shape: (batch, n_neurons) or (batch, seq_len, n_neurons).
+            session_id (Union[str, int]): The identifier for the session being processed.
+
+        Returns:
+            torch.Tensor: The stdp coefficients tensor from the Hebbian attention block.
+        """
+
+        session_id = str(session_id)
+        if session_id not in self.hebbian_blocks:
+            raise ValueError(f"Session ID '{session_id}' not found.")
+
+        return self.hebbian_blocks[session_id].hebbian_forward(x)

@@ -170,36 +170,42 @@ class linear(nn.Module):
             return self.out_layers[sess_id](x)
         
 
-# class transformer(nn.Module):
-#     def __init__(self, 
-#                  embed_dim: int,
-#                  output_dim_per_session: Any,
-#                  n_layers: int = 1,
-#                  n_heads: int = 1,
-#                  dropout: float = 0.,
-#                  id_per_session: Any = None,
-#                  joint_decoder: bool = False):
-#         super().__init__()
+class transformer(nn.Module):
+    def __init__(self, 
+                 embed_dim: int,
+                 output_dim_per_session: Any,
+                 n_layers: int = 1,
+                 n_heads: int = 1,
+                 dropout: float = 0.,
+                 id_per_session: Any = None,
+                 joint_decoder: bool = False):
+        super().__init__()
 
-#         self.attention_layers = nn.ModuleList([AttentionBlock(embed_dim=embed_dim, 
-#                                                               n_heads=n_heads, 
-#                                                               dropout=dropout) for _ in range(n_layers)])
-#         self.ff = ff_class(**kwargs)
-#         self.norm = norm_class(**kwargs)
-#         self.perceiver = perceiver_class(**kwargs)
+        self.attention_layers = nn.ModuleList([AttentionBlock(d_model=embed_dim, 
+                                                              n_heads=n_heads, 
+                                                              dropout=dropout) for _ in range(n_layers)])
+        self.joint_decoder = joint_decoder
 
-#     def forward(self, x):
-#         """
-#         Forward pass through the full transformer decoder block.
+        if joint_decoder:
+            self.out_layers = nn.Linear(embed_dim, int(output_dim_per_session))
+        else:
+            self.out_layers = nn.ModuleDict({str(sess_id): nn.Linear(embed_dim, output_dim)
+                                            for sess_id, output_dim in zip(id_per_session, output_dim_per_session)})
 
-#         Args:
-#             x (torch.Tensor): Input tensor. Shape: (batch, seq_len, n_neurons).
-#         Returns:
-#             torch.Tensor: Output tensor after passing through the attention layer, feedforward network, and perceiver block.
-#         """
-#         x = self.attention_layer(x) 
-#         ffn_out = self.ff(x)
-#         x = self.norm(x + ffn_out)
-#         x = self.perceiver(x)
+    def forward(self, x, sess_id: int = 0) -> torch.Tensor:
+        """
+        Forward pass through the full transformer decoder block.
 
-#         return x  # [B, T, bottleneck_dim * embed_dim]
+        Args:
+            x (torch.Tensor): Input tensor. Shape: (batch, seq_len, n_neurons).
+        Returns:
+            torch.Tensor: Output tensor after passing through the attention layer, feedforward network, and perceiver block.
+        """
+
+        for attn_layer in self.attention_layers:
+            x = attn_layer(x)
+
+        if self.joint_decoder:
+            return self.out_layers(x)
+        else:
+            return self.out_layers[str(sess_id)](x)

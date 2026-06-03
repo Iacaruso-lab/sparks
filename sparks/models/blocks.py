@@ -31,6 +31,7 @@ class HebbianAttentionBlock(nn.Module):
                  sliding: bool = False,
                  window_size: int = 1,
                  block_size: int = 1,
+                 n_heads: int = 1,
                  min_attn_value: float = -np.inf,
                  max_attn_value: float = np.inf) -> None:
         """
@@ -85,6 +86,7 @@ class HebbianAttentionBlock(nn.Module):
         self.perceiver = PerceiverBlock(n_neurons=n_neurons,
                                          embed_dim=embed_dim, 
                                          bottleneck_dim=bottleneck_dim, 
+                                         n_heads=n_heads,
                                          dropout=dropout)
 
 
@@ -117,7 +119,7 @@ class HebbianAttentionBlock(nn.Module):
 
 
 class AttentionBlock(nn.Module):
-    def __init__(self, d_model, n_heads, dropout=0.1, **kwargs):
+    def __init__(self, d_model, n_heads, dropout=0., **kwargs):
         super().__init__()
         
         self.self_attn = nn.MultiheadAttention(
@@ -147,17 +149,17 @@ class AttentionBlock(nn.Module):
         ffn_out = self.ffn(x)
         
         return x + ffn_out
-    
+
 
 class PerceiverBlock(nn.Module):
-    def __init__(self, n_neurons, embed_dim, bottleneck_dim, num_heads=4, dropout=0.1):
+    def __init__(self, n_neurons, embed_dim, bottleneck_dim, n_heads=1, dropout=0.):
         super().__init__()
         self.n_neurons = n_neurons
         self.embed_dim = embed_dim
         self.bottleneck_dim = bottleneck_dim
-        self.num_heads = num_heads
+        self.n_heads = n_heads
         
-        assert embed_dim % num_heads == 0, "embed_dim must be divisible by num_heads"
+        assert embed_dim % n_heads == 0, "embed_dim must be divisible by n_heads"
 
         # Learnable latent queries 
         self.latents = nn.Parameter(torch.empty(1, bottleneck_dim, embed_dim))
@@ -171,7 +173,7 @@ class PerceiverBlock(nn.Module):
         # Multi-head cross attention to attend to the neurons
         self.cross_attn = nn.MultiheadAttention(
             embed_dim=embed_dim, 
-            num_heads=num_heads, 
+            num_heads=n_heads, 
             dropout=dropout,
             batch_first=True
         )

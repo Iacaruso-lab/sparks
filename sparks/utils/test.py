@@ -45,9 +45,7 @@ def test_on_batch(model: Union[SPARKS, HebbianTransformer],
     """
 
     session_id = kwargs.get('session_id', 0)
-    burnin = kwargs.get('burnin', 0)
     act = kwargs.get('act', identity)
-    batch_idxs = kwargs.get('batch_idxs', np.arange(len(inputs)))
     tau_f = getattr(model, 'tau_f', 1)
     device = kwargs.get('device', 'cpu')
 
@@ -55,7 +53,8 @@ def test_on_batch(model: Union[SPARKS, HebbianTransformer],
 
     if tau_f > 1:
         inputs = inputs[:, :-(tau_f-1)]
-        targets = targets.unfold(dimension=1, size=tau_f, step=1).permute(0, 1, 3, 2).reshape(inputs.shape[0], inputs.shape[1], -1)
+        if targets is not None:
+            targets = targets.unfold(dimension=1, size=tau_f, step=1).permute(0, 1, 3, 2).reshape(inputs.shape[0], inputs.shape[1], -1)
 
 
     encoder_outputs_batch, decoder_outputs_batch, _, _ = model(inputs, session_id=session_id)

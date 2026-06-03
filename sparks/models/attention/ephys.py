@@ -1,6 +1,5 @@
 import math
 
-import numpy as np
 import torch
 from torch.nn import Parameter
 import torch.nn.functional as F
@@ -86,34 +85,8 @@ class EphysAttentionLayer(DenseHebbianAttentionLayer):
         Returns:
             torch.Tensor: The STDP coefficients tensor.
         """
-        stdp_history = []
-        B, T, N = spikes.shape
 
-        stdp = torch.zeros(B, N, N, device=spikes.device)  # Initialize STDP coefficients tensor
-        ones = torch.ones_like(stdp, device=spikes.device)  # Tensor of ones for the update rule
-        pre_trace = torch.zeros(B, 1, N, device=spikes.device)  # Initialize pre-synaptic trace
-        post_trace = torch.zeros(B, N, 1, device=spikes.device)  # Initialize post-synaptic trace
-
-        decay_pre, decay_post, w_pre, w_post = self.get_parameters()
-
-        for t in range(T):
-            pre_spikes, post_spikes = self.get_pre_post_spikes(spikes[:, t])
-            pre_trace = self.trace_decay(pre_trace, pre_spikes, decay_pre)
-            post_trace = self.trace_decay(post_trace, post_spikes, decay_post)
-
-            stdp = stdp + (ones - stdp) * (pre_trace * post_spikes) - stdp * (post_trace * pre_spikes)
-            stdp.clamp_(-0.5, 1.5) # Clamping to prevent extreme values
-
-            pre_trace = self.trace_update(pre_trace, pre_spikes, w_pre)
-            post_trace = self.trace_update(post_trace, post_spikes, w_post)
-
-            if torch.isnan(stdp).any():
-                raise ValueError("NaN values detected in attention coefficients.")
-    
-            stdp_history.append(stdp.unsqueeze(1))
-
-        stdp_history = torch.concatenate(stdp_history, dim=1)
-        return stdp_history
+        raise NotImplementedError("This method should be implemented in subclasses.")
 
     def trace_decay(self, trace: torch.Tensor, spikes: torch.Tensor, decay: float) -> torch.Tensor:
         """
@@ -203,6 +176,48 @@ class FullEphysAttentionLayer(EphysAttentionLayer):
         self._decay_init()
         self._init_update_weights()    
 
+    def stdp_coefficients(self, spikes: torch.Tensor) -> torch.Tensor:
+        """
+        Compute the STDP coefficients for a given input spike tensor.
+
+        This method allows for retrieving the raw STDP coefficients without applying the final linear transformation,
+        which can be useful for analysis or ablation studies.
+
+        Args:
+            spikes (torch.Tensor): Tensor representation of the spikes from the neurons.
+                                    It should be of shape [n_total_neurons, n_timesteps].
+
+        Returns:
+            torch.Tensor: The STDP coefficients tensor.
+        """
+        B, T, N = spikes.shape
+
+        stdp_history = torch.empty((B, T, N, N), device=spikes.device, dtype=spikes.dtype)
+        stdp = torch.zeros(B, N, N, device=spikes.device, dtype=spikes.dtype)  # Initialize STDP coefficients tensor
+        pre_trace = torch.zeros(B, N, N, device=spikes.device, dtype=spikes.dtype)  # Initialize pre-synaptic trace
+        post_trace = torch.zeros(B, N, N, device=spikes.device, dtype=spikes.dtype)  # Initialize post-synaptic trace
+
+        decay_pre, decay_post, w_pre, w_post = self.get_parameters()
+
+        for t in range(T):
+            pre_spikes, post_spikes = self.get_pre_post_spikes(spikes[:, t])
+
+            pre_trace.mul_(decay_pre)
+            post_trace.mul_(decay_post)
+
+            stdp = stdp + (1. - stdp) * (pre_trace * post_spikes) - stdp * (post_trace * pre_spikes)
+            stdp.clamp_(-0.5, 1.5) # Clamping to prevent extreme values
+
+            pre_trace.add_(pre_spikes * w_pre)
+            post_trace.add_(post_spikes * w_post)
+    
+            stdp_history[:, t] = stdp
+
+        if torch.isnan(stdp_history).any():
+            raise ValueError("NaN values detected in attention coefficients.")
+
+        return stdp_history
+
     def _decay_init(self):
         """"
         Initializes the latent parameters for the decay of the eligibility traces.
@@ -212,11 +227,10 @@ class FullEphysAttentionLayer(EphysAttentionLayer):
         self.delta_scale = self.dt / self.tau_s
         latent_delta_init = math.log(math.exp(1.0) - 1.0) # inverse softplus of 1.0 is log(exp(1.0) - 1.0)
         
-        self.latent_delta_pre = Parameter(torch.full((self.n_neurons, self.n_neurons), latent_delta_init) 
-                                          + torch.randn(self.n_neurons, self.n_neurons) * latent_delta_init * 0.1)
-        self.latent_delta_post = Parameter(torch.full((self.n_neurons, self.n_neurons), latent_delta_init) 
-                                           + torch.randn(self.n_neurons, self.n_neurons) * latent_delta_init * 0.1)
-
+        self.latent_delta_pre = Parameter(torch.full((1, self.n_neurons, self.n_neurons), latent_delta_init) 
+                                          + torch.randn(1, self.n_neurons, self.n_neurons) * latent_delta_init * 0.1)
+        self.latent_delta_post = Parameter(torch.full((1, self.n_neurons, self.n_neurons), latent_delta_init) 
+                                           + torch.randn(1, self.n_neurons, self.n_neurons) * latent_delta_init * 0.1)
 
     def _init_update_weights(self):
         """Creates latent weights with values around softplus(x) = 1.0 for stable initial training. 
@@ -230,9 +244,8 @@ class FullEphysAttentionLayer(EphysAttentionLayer):
         base_val = math.log(math.exp(1.0) - 1.0) 
 
         # Add uniform noise around this healthy center
-        self.latent_w_pre = Parameter(torch.empty(self.n_neurons, self.n_neurons).uniform_(base_val - 0.1, base_val + 0.1))
-        self.latent_w_post = Parameter(torch.empty(self.n_neurons, self.n_neurons).uniform_(base_val - 0.1, base_val + 0.1))
-
+        self.latent_w_pre = Parameter(torch.empty(1, self.n_neurons, self.n_neurons).uniform_(base_val - 0.1, base_val + 0.1))
+        self.latent_w_post = Parameter(torch.empty(1, self.n_neurons, self.n_neurons).uniform_(base_val - 0.1, base_val + 0.1))
 
     def get_parameters(self):
         """
@@ -246,6 +259,7 @@ class FullEphysAttentionLayer(EphysAttentionLayer):
         w_post = F.softplus(self.latent_w_post) * self.w_plus * self.alpha
         
         return decay_pre, decay_post, w_pre, w_post
+
 
 class LightEphysAttentionLayer(EphysAttentionLayer):
     def __init__(self,
@@ -291,6 +305,48 @@ class LightEphysAttentionLayer(EphysAttentionLayer):
                          w_plus=w_plus,
                          alpha=alpha,
                          **kwargs)
+
+    def stdp_coefficients(self, spikes: torch.Tensor) -> torch.Tensor:
+        """
+        Compute the STDP coefficients for a given input spike tensor.
+
+        This method allows for retrieving the raw STDP coefficients without applying the final linear transformation,
+        which can be useful for analysis or ablation studies.
+
+        Args:
+            spikes (torch.Tensor): Tensor representation of the spikes from the neurons.
+                                    It should be of shape [n_total_neurons, n_timesteps].
+
+        Returns:
+            torch.Tensor: The STDP coefficients tensor.
+        """
+        B, T, N = spikes.shape
+
+        stdp_history = torch.empty((B, T, N, N), device=spikes.device, dtype=spikes.dtype)
+        stdp = torch.zeros(B, N, N, device=spikes.device, dtype=spikes.dtype)  # Initialize STDP coefficients tensor
+        pre_trace = torch.zeros(B, 1, N, device=spikes.device, dtype=spikes.dtype)  # Initialize pre-synaptic trace
+        post_trace = torch.zeros(B, N, 1, device=spikes.device, dtype=spikes.dtype)  # Initialize post-synaptic trace
+
+        decay_pre, decay_post, w_pre, w_post = self.get_parameters()
+
+        for t in range(T):
+            pre_spikes, post_spikes = self.get_pre_post_spikes(spikes[:, t])
+
+            pre_trace.mul_(decay_pre)
+            post_trace.mul_(decay_post)
+
+            stdp = stdp + (1. - stdp) * (pre_trace * post_spikes) - stdp * (post_trace * pre_spikes)
+            stdp.clamp_(-0.5, 1.5) # Clamping to prevent extreme values
+
+            pre_trace.add_(pre_spikes * w_pre)
+            post_trace.add_(post_spikes * w_post)
+    
+            stdp_history[:, t] = stdp
+
+        if torch.isnan(stdp_history).any():
+            raise ValueError("NaN values detected in attention coefficients.")
+
+        return stdp_history
 
     def get_parameters(self):
         """

@@ -11,6 +11,7 @@ class HebbianAttentionConfig:
     """Configuration for the Hebbian Attention Block."""
     block_class: Type[nn.Module] = HebbianAttentionBlock
     tau_s: float = 1.0
+    n_heads: int = 1 # Number of attention heads for perceiver multi-head attention
     dropout: float = 0.
     dt: float = 0.001      # Default value for the time-step in ms
     w_plus: float = 0.001
@@ -33,6 +34,7 @@ class HebbianAttentionConfig:
         config_params = {
             'dt': self.dt,
             'tau_s': self.tau_s,
+            'n_heads': self.n_heads,
             'w_plus': self.w_plus,
             'alpha': self.alpha,
             'data_type': self.data_type,
@@ -56,7 +58,7 @@ class ConvConfig:
     n_layers: int = 0
 
     # Parameters for the attention block (if used)
-    n_heads: int = 1
+    n_heads: int = 4
     dropout: float = 0.
 
     # Parameters for Mamba

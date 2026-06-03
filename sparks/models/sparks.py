@@ -131,10 +131,10 @@ class SPARKS(torch.nn.Module):
     def pad_z(self, z: torch.Tensor) -> torch.Tensor:
         """
         Transforms a sequence of latents into sliding context windows.
-        
+    
         Args:
             z: Tensor of shape [B, T, D] (Batch, Time, Latent Dimension)
-            
+    
         Returns:
             Tensor of shape [B, T, tau_p * D]
         """
@@ -143,7 +143,7 @@ class SPARKS(torch.nn.Module):
         # If the window is 1, no unfolding is necessary
         if self.tau_p == 1:
             return z
-            
+    
         # Padding
         # To predict step 't', we need [t - tau_p + 1 ... t]. 
         # For early time steps (t < tau_p), we must pad the start of the sequence with zeros.
