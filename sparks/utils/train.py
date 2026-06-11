@@ -86,6 +86,8 @@ def train_on_batch(model: Union[SPARKS, HebbianTransformer],
  
     update_and_reset(model, loss, optimizer)
 
+    return loss.item()
+
 def train(model: Union[SPARKS, HebbianTransformer],
           train_dls: List,
           loss_fn: Any,

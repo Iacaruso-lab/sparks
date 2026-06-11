@@ -37,6 +37,7 @@ class HebbianAttentionConfig:
             'n_heads': self.n_heads,
             'w_plus': self.w_plus,
             'alpha': self.alpha,
+            'dropout': self.dropout,
             'data_type': self.data_type,
             'sliding': self.sliding,
             'window_size': self.window_size,
