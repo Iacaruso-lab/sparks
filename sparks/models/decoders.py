@@ -14,7 +14,8 @@ class mlp(nn.Module):
                  hidden_dims: int,
                  output_dim_per_session: Any,
                  id_per_session: np.ndarray = np.array([0]),
-                 joint_decoder: bool = False) -> None:
+                 joint_decoder: bool = False,
+                 dropout: float = 0.0) -> None:
 
         """
         Initialize a Multi-Layer Perceptron (MLP).
@@ -45,6 +46,7 @@ class mlp(nn.Module):
         layers = []
 
         for h_dim in hidden_dims:
+            layers.append(nn.Dropout(dropout))
             layers.append(nn.Linear(in_dim, h_dim))
             layers.append(nn.ReLU())
             in_dim = h_dim

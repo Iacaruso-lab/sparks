@@ -63,8 +63,6 @@ class SPARKS(torch.nn.Module):
                                       device=device)
         
         if decoder is None:
-            n_inputs_decoder = latent_dim * tau_p
-            hid_dims = [int(np.mean([n_inputs_decoder, np.mean(output_dim_per_session)]))]
             if output_dim_per_session is None:
                 raise ValueError("`output_dim_per_session` must be provided if `decoder` is None.")
             if isinstance(output_dim_per_session, int) and not joint_decoder:
@@ -78,6 +76,8 @@ class SPARKS(torch.nn.Module):
             else:
                 output_dim_per_session = [dim * tau_f for dim in output_dim_per_session]
 
+            n_inputs_decoder = latent_dim * tau_p
+            hid_dims = [int(np.mean([n_inputs_decoder, np.mean(output_dim_per_session)]))]
             decoder = mlp(in_dim=n_inputs_decoder, hidden_dims=hid_dims,
                           output_dim_per_session=output_dim_per_session,
                           id_per_session=id_per_session, joint_decoder=joint_decoder).to(device)
@@ -160,11 +160,11 @@ class SPARKS(torch.nn.Module):
         # Reorder and Flatten
         # We want the window elements to be chronological, so we swap D and tau_p.
         # .permute transforms [B, T, D, tau_p] -> [B, T, tau_p, D]
-        z_reordered = z_windows.permute(0, 1, 3, 2).contiguous()
+        # z_reordered = z_windows.permute(0, 1, 3, 2).contiguous()
         
         # Finally, flatten the window and feature dimensions together
         # Shape: [B, T, tau_p * D]
-        z_flat = z_reordered.view(B, T, self.tau_p * D)
+        z_flat = z_windows.flatten(start_dim=2)  # Shape: [B, T, tau_p * D]
         
         return z_flat
     
