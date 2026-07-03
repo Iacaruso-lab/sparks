@@ -5,24 +5,20 @@ import torch.nn.functional as F
 from torch import nn
 
 
-class FeedForward(torch.nn.Module):
+class SwiGLU(nn.Module):
+    def __init__(self, dim, hidden_mult=8/3):
+        super().__init__()
+        hidden = int(dim * hidden_mult)
+        self.w1 = nn.Linear(dim, hidden, bias=False)   # gate
+        self.w2 = nn.Linear(dim, hidden, bias=False)   # value
+        self.w3 = nn.Linear(hidden, dim, bias=False)   # out
+    def forward(self, x):
+        return self.w3(F.silu(self.w1(x)) * self.w2(x))
+
+class FeedForward(nn.Module):
     def __init__(self, dim):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.LayerNorm(dim),
-            nn.Linear(dim, dim * 4),
-            nn.GELU(),
-            nn.Linear(dim * 4, dim)
-        )
-
+        self.norm = nn.RMSNorm(dim)
+        self.ffn = SwiGLU(dim)
     def forward(self, x):
-        return self.net(x)
-
-
-def generate_causal_mask(seq_len, device):
-    """
-    Generates an upper-triangular matrix of -inf, with zeros on the diagonal.
-    Shape: [seq_len, seq_len]
-    """
-    mask = nn.Transformer.generate_square_subsequent_mask(seq_len)
-    return mask.to(device)
+        return self.ffn(self.norm(x))

@@ -132,7 +132,7 @@ class AttentionBlock(nn.Module):
         self.norm = nn.LayerNorm(d_model)
         self.ffn = FeedForward(d_model)
 
-    def forward(self, x, mask=None):
+    def forward(self, x):
         """
         x: [B, T, d_model]
         mask: Optional causal mask for autoregressive training
@@ -142,7 +142,7 @@ class AttentionBlock(nn.Module):
             key=x, 
             value=x, 
             need_weights=False, 
-            attn_mask=mask
+            is_causal=True,
         )
 
         x = x + attn_out 
@@ -161,14 +161,15 @@ class PerceiverBlock(nn.Module):
         
         assert embed_dim % n_heads == 0, "embed_dim must be divisible by n_heads"
 
-        # Learnable latent queries 
-        self.latents = nn.Parameter(torch.empty(1, bottleneck_dim, embed_dim))
-        nn.init.trunc_normal_(self.latents, std=0.02)
-        self.norm_latents = nn.LayerNorm(embed_dim)
-
         # Learnable positional embeddings for the neurons
         self.spatial_pos_embed = nn.Parameter(torch.empty(1, 1, self.n_neurons, self.embed_dim))
-        nn.init.trunc_normal_(self.spatial_pos_embed, std=0.02)
+        nn.init.trunc_normal_(self.spatial_pos_embed, std=1/np.sqrt(self.embed_dim))  # Initialize with small random values
+
+        # Learnable latent queries initialised as the spatial mean + a bit of noise to break symmetry
+        self.latents = nn.Parameter(torch.empty(1, bottleneck_dim, embed_dim))
+        nn.init.trunc_normal_(self.latents, std=1/np.sqrt(self.embed_dim))
+        self.norm_latents = nn.LayerNorm(embed_dim)
+
         
         # Multi-head cross attention to attend to the neurons
         self.cross_attn = nn.MultiheadAttention(
@@ -204,7 +205,8 @@ class PerceiverBlock(nn.Module):
         attn_out, _ = self.cross_attn(
             query=latents_norm,
             key=x_flat,
-            value=x_flat
+            value=x_flat,
+            need_weights=False
         )
     
         x = attn_out + latents_expanded  # Residual connection around cross attention
@@ -215,7 +217,7 @@ class PerceiverBlock(nn.Module):
         # out = self.norm2(attn_out + ffn_out).view(B, T, self.bottleneck_dim * D) # Shape: [B,T, K * D]
         
         return out
-        
+
 # class MambaBlock(nn.Module):
 #     def __init__(self, d_model, d_state=16, d_conv=4, expand=2, **kwargs):
 #         """
@@ -244,3 +246,8 @@ class PerceiverBlock(nn.Module):
 
 #         out = self.mamba(self.norm(x))
 #         return x + out
+
+
+
+
+

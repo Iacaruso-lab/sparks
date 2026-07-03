@@ -72,24 +72,6 @@ class BaseSlidingWindowAttentionLayer(BaseHebbianAttentionLayer):
 
         self.v_proj = torch.nn.Linear(self.window_size * self.block_size, self.embed_dim)
 
-    def get_pre_post_spikes(self, spikes: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Get the pre and post synaptic spikes from the input spikes tensor.
-
-        Args:
-            spikes (torch.Tensor): Tensor of shape [batch_size, n_neurons, n_timesteps].
-
-        Returns:
-            Tuple[torch.Tensor, torch.Tensor]: Pre-synaptic spikes and post-synaptic spikes.
-        """
-        pre_spikes = spikes.view(spikes.shape[0], -1, self.block_size, 1)  # [B, N/b, b, 1]
-        post_spikes = self.roll(spikes)  # [B, N/b, 1, b*w]
-
-        assert post_spikes.shape == torch.Size([spikes.shape[0], spikes.shape[1] // self.block_size, 
-                                                1, self.block_size * self.window_size])
-
-        return pre_spikes, post_spikes
-
     def roll(self, x):
         if self.window_size == 1:
             return x.view(x.shape[0], x.shape[1] // self.block_size, 1, self.block_size)

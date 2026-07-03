@@ -147,9 +147,8 @@ class HebbianEncoder(nn.Module):
 
         # Conventional Attention
         _, T, _ = h.shape
-        causal_mask = generate_causal_mask(T, self.device)
         for conv_block in self.conventional_blocks:
-            h = conv_block(h, causal_mask) # Shape: [B, T, bottleneck_dim * D]
+            h = conv_block(h) # Shape: [B, T, bottleneck_dim * D]
 
         # Projection Head
         mu = self.projection_head['mu'](h)

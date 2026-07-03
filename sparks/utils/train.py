@@ -1,4 +1,5 @@
 from typing import Any, Union, List
+from xml.parsers.expat import model
 
 import numpy as np
 import torch
@@ -13,7 +14,7 @@ from sparks.data.providers import StandardTargetProvider, TargetProvider
 def update_and_reset(model: Union[SPARKS, HebbianTransformer],
                      loss: Any,
                      optimizer: torch.optim.Optimizer,
-                     max_val: float = 0.25):
+                     max_val: float = 1.):
     """
     Computes clipped gradients, updates the model's weights using the computed loss and the optimizer, 
     and then resets the gradients. This function is typically called after every batch during training.
@@ -29,7 +30,7 @@ def update_and_reset(model: Union[SPARKS, HebbianTransformer],
     """
 
     loss.backward()
-    torch.nn.utils.clip_grad_value_(model.parameters(), max_val) 
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_val)
 
     optimizer.step()
 
@@ -68,6 +69,7 @@ def train_on_batch(model: Union[SPARKS, HebbianTransformer],
     session_id = kwargs.get('session_id', 0)
     beta = kwargs.get('beta', None)
     tau_f = getattr(model, 'tau_f', 1)
+    burnin = kwargs.get('burnin', 0)
 
     model.train()
 
@@ -80,10 +82,10 @@ def train_on_batch(model: Union[SPARKS, HebbianTransformer],
     _, decoder_outputs, mu, logvar = model(inputs, session_id=session_id)
 
     if beta is not None:
-        loss += kl_loss(decoder_outputs, targets.to(model.device), loss_fn, mu, logvar, beta)
+        loss += kl_loss(decoder_outputs[:, burnin:], targets[:, burnin:].to(model.device), loss_fn, mu, logvar, beta)
     else:
-        loss += loss_fn(decoder_outputs, targets.to(model.device))
- 
+        loss += loss_fn(decoder_outputs[:, burnin:], targets[:, burnin:].to(model.device))
+
     update_and_reset(model, loss, optimizer)
 
     return loss.item()

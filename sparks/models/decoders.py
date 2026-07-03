@@ -180,7 +180,8 @@ class transformer(nn.Module):
                  n_heads: int = 1,
                  dropout: float = 0.,
                  id_per_session: Any = None,
-                 joint_decoder: bool = False):
+                 joint_decoder: bool = False,
+                 zero_init: bool = False):
         super().__init__()
 
         self.attention_layers = nn.ModuleList([AttentionBlock(d_model=embed_dim, 
@@ -193,8 +194,17 @@ class transformer(nn.Module):
         else:
             self.out_layers = nn.ModuleDict({str(sess_id): nn.Linear(embed_dim, output_dim)
                                             for sess_id, output_dim in zip(id_per_session, output_dim_per_session)})
+        
+        if zero_init:
+            if self.joint_decoder:
+                nn.init.zeros_(self.out_layers.weight)
+                nn.init.zeros_(self.out_layers.bias)
+            else:
+                for sess_id in self.out_layers.keys():
+                    nn.init.zeros_(self.out_layers[sess_id].weight)
+                    nn.init.zeros_(self.out_layers[sess_id].bias)
 
-    def forward(self, x, sess_id: int = 0) -> torch.Tensor:
+    def forward(self, x, sess_id: int = 0, **kwargs) -> torch.Tensor:
         """
         Forward pass through the full transformer decoder block.
 
