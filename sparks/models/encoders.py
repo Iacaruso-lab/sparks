@@ -5,7 +5,6 @@ import torch.nn as nn
 
 from sparks.models.dataclasses import HebbianAttentionConfig, ConvConfig, ProjectionConfig
 from sparks.models.blocks import AttentionBlock
-from sparks.models.utils import generate_causal_mask
 
 
 class HebbianEncoder(nn.Module):

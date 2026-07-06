@@ -51,11 +51,16 @@ def clamped_affine_scan(a: torch.Tensor, b: torch.Tensor,
     if min_val == -float('inf') and max_val == float('inf'):
         return parallel_affine_scan(a, b)
 
-    T = a.shape[1]
+    B, T = a.shape[0], a.shape[1]
+    # a/b are frequently broadcast views (e.g. a constant decay expanded over T); materializing
+    # them contiguously once avoids re-striding through a 0-stride dim on every one of the T slices below.
+    a = a.expand(B, T, *b.shape[2:]).contiguous()
+    b = b.contiguous()
+
     x = torch.zeros_like(b[:, 0])
-    outputs = []
+    out = torch.empty_like(b)
     for t in range(T):
         x = torch.clamp(a[:, t] * x + b[:, t], min=min_val, max=max_val)
-        outputs.append(x)
+        out[:, t] = x
 
-    return torch.stack(outputs, dim=1)
+    return out

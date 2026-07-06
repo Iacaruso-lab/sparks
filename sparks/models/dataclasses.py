@@ -13,6 +13,8 @@ class HebbianAttentionConfig:
     tau_s: float = 1.0
     n_heads: int = 1 # Number of attention heads for perceiver multi-head attention
     dropout: float = 0.
+    drop_path: float = 0. # Stochastic depth rate for the block's residual connections
+    use_latent_self_attn: bool = True # If True, the Perceiver's K latents self-attend after cross-attention
     dt: float = 0.001      # Default value for the time-step in ms
     w_plus: float = 0.001
     alpha: float = 1.1
@@ -38,6 +40,8 @@ class HebbianAttentionConfig:
             'w_plus': self.w_plus,
             'alpha': self.alpha,
             'dropout': self.dropout,
+            'drop_path': self.drop_path,
+            'use_latent_self_attn': self.use_latent_self_attn,
             'data_type': self.data_type,
             'sliding': self.sliding,
             'window_size': self.window_size,
@@ -61,6 +65,7 @@ class ConvConfig:
     # Parameters for the attention block (if used)
     n_heads: int = 4
     dropout: float = 0.
+    drop_path: float = 0. # Stochastic depth rate for the block's residual connections
 
     # Parameters for Mamba
     d_state: int = 16
@@ -78,6 +83,7 @@ class ConvConfig:
         config_params = {
             'n_heads': self.n_heads,
             'dropout': self.dropout,
+            'drop_path': self.drop_path,
             'd_state': self.d_state,
             'd_conv': self.d_conv,
             'expand': self.expand

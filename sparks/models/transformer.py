@@ -5,7 +5,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from sparks.models.dataclasses import HebbianAttentionConfig, ConvConfig
-from sparks.models.utils import generate_causal_mask
 
 
 class HebbianTransformer(nn.Module):
@@ -169,9 +168,8 @@ class HebbianTransformer(nn.Module):
 
         # Conventional Attention
         _, T, _ = h.shape
-        causal_mask = generate_causal_mask(T, self.device)
         for conv_block in self.conventional_blocks:
-            h = conv_block(h, causal_mask) # Shape: [B, T, bottleneck_dim * D]
+            h = conv_block(h) # Shape: [B, T, bottleneck_dim * D]
 
         # 3. Output Projection
         out = self.output_heads[session_id](h)

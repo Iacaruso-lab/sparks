@@ -48,7 +48,7 @@ class mlp(nn.Module):
         for h_dim in hidden_dims:
             layers.append(nn.Dropout(dropout))
             layers.append(nn.Linear(in_dim, h_dim))
-            layers.append(nn.ReLU())
+            layers.append(nn.GELU())
             in_dim = h_dim
 
         if joint_decoder:
