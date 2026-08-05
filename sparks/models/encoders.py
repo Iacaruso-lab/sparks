@@ -29,6 +29,15 @@ class HebbianEncoder(nn.Module):
     Returns:
         None
     """
+    # Without beta (KL weight) tuned carefully, logvar has no pressure keeping it in a sane
+    # range -- it's the raw, unconstrained output of a Linear layer. Left unclamped, this can (a)
+    # inject unstable, run-to-run-varying amounts of reparameterization noise during training
+    # (large logvar -> large std -> large eps*std, fresh every forward pass), and (b) genuinely
+    # overflow float32 in kl_loss's logvar.exp() term for large enough values. Clamping bounds
+    # both failure modes without needing beta to be perfectly tuned first.
+    _LOGVAR_MIN = -4.0
+    _LOGVAR_MAX = 2.0
+
     def __init__(self,
                  n_neurons_per_session: Union[int, List[int]],
                  embed_dim: int,
@@ -70,6 +79,14 @@ class HebbianEncoder(nn.Module):
             conv_config.block_class(d_model=embed_dim * bottleneck_dim, **conv_config.params)
             for _ in range(conv_config.n_layers)
         ])
+
+        # The Hebbian block and every conventional block are pre-norm (each sub-layer normalizes
+        # its own input before transforming it) but none of them apply a final norm to what they
+        # return -- so without this, mu/logvar's input directly inherits whatever scale the
+        # residual stream happens to have accumulated, unbounded, especially with n_layers=0
+        # (the default), where nothing at all sits between the raw Hebbian/Perceiver output and
+        # the projection heads.
+        self.pre_projection_norm = nn.LayerNorm(embed_dim * bottleneck_dim)
 
         self.projection_head = self._create_projection_head()
     
@@ -125,13 +142,19 @@ class HebbianEncoder(nn.Module):
         self.session_ids.append(sid)
         self.n_neurons_map[sid] = n_neurons
 
-    def forward(self, x: torch.Tensor, session_id: Union[str, int]) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor, session_id: Union[str, int],
+               carry_state: bool = False) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Forward pass through the HebbianTransformerEncoder.
 
         Args:
             x (torch.Tensor): Input tensor. Shape: (batch, n_neurons) or (batch, seq_len, n_neurons).
             session_id (Union[str, int]): The identifier for the session being processed.
+            carry_state (bool): If True, this session's Hebbian block carries its recurrent
+                (STDP/trace/linear-attention) state forward from the previous forward() call for
+                this session instead of starting from zero -- see HebbianAttentionBlock.forward.
+                Call reset_state() before the first chunk of a new, unrelated sequence. Default
+                is False (matches the original per-call-independent behavior).
 
         Returns:
             A tuple containing the mean (mu) and log-variance (logvar) of the latent distribution.
@@ -142,20 +165,38 @@ class HebbianEncoder(nn.Module):
             raise ValueError(f"Session ID '{session_id}' not found.")
 
         # Hebbian Attention
-        h = self.hebbian_blocks[session_id](x)
+        h = self.hebbian_blocks[session_id](x, carry_state=carry_state)
 
         # Conventional Attention
         _, T, _ = h.shape
         for conv_block in self.conventional_blocks:
             h = conv_block(h) # Shape: [B, T, bottleneck_dim * D]
 
+        h = self.pre_projection_norm(h)
+
         # Projection Head
         mu = self.projection_head['mu'](h)
-        logvar = self.projection_head['logvar'](h)
+        logvar = self.projection_head['logvar'](h).clamp(self._LOGVAR_MIN, self._LOGVAR_MAX)
 
         return mu, logvar
 
-    def reparametrize(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
+    def reset_state(self, session_id: Optional[Union[str, int]] = None):
+        """
+        Clears carried recurrent state (see forward's `carry_state`). Call before the first
+        chunk of a new, unrelated sequence.
+
+        Args:
+            session_id: If given, resets only that session's Hebbian block. If None (default),
+                resets every session's block.
+        """
+        if session_id is None:
+            for block in self.hebbian_blocks.values():
+                block.reset_state()
+        else:
+            self.hebbian_blocks[str(session_id)].reset_state()
+
+    def reparametrize(self, mu: torch.Tensor, logvar: torch.Tensor,
+                      sample: Optional[bool] = None) -> torch.Tensor:
         """
         Reparameterizes the input tensors using the reparameterization trick from the Variational AutoEncoder
         (VAE, Kingma et al. 2014).
@@ -163,10 +204,26 @@ class HebbianEncoder(nn.Module):
         Args:
             mu (torch.Tensor): The mean of the normally-distributed latent space.
             logvar (torch.Tensor): The log variance of the normally-distributed latent space.
+            sample (bool, optional): Whether to draw a sample from the posterior rather than return
+                its mean. Default is None, which follows the module's train/eval mode: sampling is
+                required during training (it is what makes the KL term meaningful and the gradient
+                estimator unbiased), but at evaluation time it injects noise into every prediction
+                the decoder makes, which is pure loss for any metric scoring the decoder's output
+                per time-step. Reconstruction likelihoods are especially sensitive: since the
+                output nonlinearity is not affine, the noise both adds variance and biases the
+                predicted rate toward the middle of its range, which is the wrong direction for
+                sparse spike trains. Pass True to force sampling in eval mode, e.g. to average
+                several posterior draws into a posterior predictive estimate.
 
         Returns:
-            torch.Tensor: The reparameterized tensor.
+            torch.Tensor: A posterior sample if sampling, else `mu`.
         """
+
+        if sample is None:
+            sample = self.training
+
+        if not sample:
+            return mu
 
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)

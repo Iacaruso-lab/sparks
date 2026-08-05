@@ -42,6 +42,7 @@ class SPARKS(torch.nn.Module):
         self.embed_dim = embed_dim
         self.bottleneck_dim = bottleneck_dim
         self.device = device
+        self._carried_z_tail = {}  # session_id (str) -> last (tau_p - 1) latents, for pad_z
 
         if isinstance(n_neurons_per_session, int):
             n_neurons_per_session = [n_neurons_per_session]
@@ -77,15 +78,16 @@ class SPARKS(torch.nn.Module):
                 output_dim_per_session = [dim * tau_f for dim in output_dim_per_session]
 
             n_inputs_decoder = latent_dim * tau_p
-            hid_dims = [int(np.mean([n_inputs_decoder, np.mean(output_dim_per_session)]))]
+            hid_dims = [4 * n_inputs_decoder]
             decoder = mlp(in_dim=n_inputs_decoder, hidden_dims=hid_dims,
                           output_dim_per_session=output_dim_per_session,
                           id_per_session=id_per_session, joint_decoder=joint_decoder).to(device)
 
         self.decoder = decoder
 
-    def forward(self, x: torch.Tensor, session_id: Union[str, int]) -> Tuple[torch.Tensor, torch.Tensor,
-                                                                             torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor, session_id: Union[str, int],
+               carry_state: bool = False) -> Tuple[torch.Tensor, torch.Tensor,
+                                                    torch.Tensor, torch.Tensor]:
         """
         The forward pass of the autoencoder.
 
@@ -98,6 +100,13 @@ class SPARKS(torch.nn.Module):
             inputs (torch.tensor): The input data tensor.
             encoder_outputs (torch.tensor): The collection of past encoder output tensors.
             session_id (int, optional): The session id. Default is 0.
+            carry_state (bool): If True, the encoder's Hebbian attention/Perceiver recurrent
+                state -- and, if tau_p > 1, the decoder's sliding-window tail -- carry forward
+                from this session's previous forward() call instead of starting from zero/being
+                zero-padded, so a long recording can be processed as consecutive chunks with
+                continuous dynamics throughout. See HebbianEncoder.forward and pad_z. Call
+                reset_state() before the first chunk of a new, unrelated sequence. Default is
+                False (matches the original per-call-independent behavior).
 
         Returns:
             encoder_outputs (torch.tensor): The encoder outputs tensor with the newly computed encoder output appended.
@@ -106,12 +115,34 @@ class SPARKS(torch.nn.Module):
             logvar (torch.tensor): The log-variance of the latent distribution computed by the encoder.
         """
 
-        mu, logvar = self.encoder(x.float().to(self.device), session_id)
+        mu, logvar = self.encoder(x.float().to(self.device), session_id, carry_state=carry_state)
         enc_outputs = self.encoder.reparametrize(mu, logvar)
 
-        decoder_outputs = self.decoder(self.pad_z(enc_outputs), session_id)
+        sid = str(session_id)
+        prev_tail = self._carried_z_tail.get(sid) if carry_state else None
+        decoder_outputs = self.decoder(self.pad_z(enc_outputs, prev_tail=prev_tail), session_id)
+
+        if carry_state and self.tau_p > 1:
+            tail_source = enc_outputs if prev_tail is None else torch.cat([prev_tail, enc_outputs], dim=1)
+            self._carried_z_tail[sid] = tail_source[:, -(self.tau_p - 1):].detach()
 
         return enc_outputs, decoder_outputs, mu, logvar
+
+    def reset_state(self, session_id: Optional[Union[str, int]] = None) -> None:
+        """
+        Clears carried recurrent state (see forward's `carry_state`). Call before the first
+        chunk of a new, unrelated sequence.
+
+        Args:
+            session_id: If given, resets only that session's encoder state. If None (default),
+                resets every session's.
+        """
+        self.encoder.reset_state(session_id)
+
+        if session_id is None:
+            self._carried_z_tail.clear()
+        else:
+            self._carried_z_tail.pop(str(session_id), None)
 
     def generate(self, z: torch.Tensor, session_id: Union[str, int]) -> torch.Tensor:
         """
@@ -128,28 +159,35 @@ class SPARKS(torch.nn.Module):
         """
         return self.decoder(self.pad_z(z), session_id)
 
-    def pad_z(self, z: torch.Tensor) -> torch.Tensor:
+    def pad_z(self, z: torch.Tensor, prev_tail: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Transforms a sequence of latents into sliding context windows.
-    
+
         Args:
             z: Tensor of shape [B, T, D] (Batch, Time, Latent Dimension)
-    
+            prev_tail: Optional tensor of shape [B, tau_p - 1, D] -- the last (tau_p - 1) latents
+                from the end of the previous chunk, used to fill the window for this chunk's
+                early timesteps instead of zeros. See forward's `carry_state`. Default is None
+                (zero-pad, as before).
+
         Returns:
             Tensor of shape [B, T, tau_p * D]
         """
         B, T, D = z.shape
-        
+
         # If the window is 1, no unfolding is necessary
         if self.tau_p == 1:
             return z
-    
+
         # Padding
-        # To predict step 't', we need [t - tau_p + 1 ... t]. 
-        # For early time steps (t < tau_p), we must pad the start of the sequence with zeros.
-        # PyTorch F.pad format for a 3D tensor: (last_dim_left, last_dim_right, second_last_left, second_last_right)
-        # We pad the Time dimension (second to last) on the left by (tau_p - 1).
-        z_padded = F.pad(z, (0, 0, self.tau_p - 1, 0))  # Shape: [B, T + self.tau_p - 1, D]
+        # To predict step 't', we need [t - tau_p + 1 ... t].
+        # For early time steps (t < tau_p), we must pad the start of the sequence with the tail
+        # of the previous chunk if given (continuous dynamics across a chunk boundary), or zeros
+        # otherwise (e.g. the true start of a sequence).
+        if prev_tail is None:
+            z_padded = F.pad(z, (0, 0, self.tau_p - 1, 0))  # Shape: [B, T + self.tau_p - 1, D]
+        else:
+            z_padded = torch.cat([prev_tail, z], dim=1)  # Shape: [B, T + self.tau_p - 1, D]
         
         # Sliding Window
         # .unfold(dimension, size, step) extracts sliding windows across the target dimension.
@@ -202,6 +240,10 @@ class SPARKS(torch.nn.Module):
                                       hebbian_config=hebbian_config)
         
         if not self.decoder.joint_decoder:
-            self.decoder.out_layers[str(session_id)] = torch.nn.Linear(self.decoder.layers[-2].out_features, 
+            # Read the width the new head needs off an existing one, rather than off the decoder's
+            # hidden stack: every decoder in sparks.models.decoders owns `out_layers`, but only
+            # `mlp` has a `layers` attribute, so keying on the latter broke for `linear`.
+            in_features = next(iter(self.decoder.out_layers.values())).in_features
+            self.decoder.out_layers[str(session_id)] = torch.nn.Linear(in_features,
                                                                        new_output_dim).to(self.device)
     

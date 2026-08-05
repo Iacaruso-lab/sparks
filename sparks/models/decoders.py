@@ -7,15 +7,18 @@ import torch.nn.functional as F
 
 
 from sparks.models.blocks import AttentionBlock
+from sparks.models.utils import FeedForward, DropPath
+
 
 class mlp(nn.Module):
     def __init__(self,
                  in_dim: int,
                  hidden_dims: int,
                  output_dim_per_session: Any,
-                 id_per_session: np.ndarray = np.array([0]),
+                 id_per_session: np.ndarray = None,
                  joint_decoder: bool = False,
-                 dropout: float = 0.0) -> None:
+                 dropout: float = 0.0,
+                 base_rate: float = 0.) -> None:
 
         """
         Initialize a Multi-Layer Perceptron (MLP).
@@ -31,9 +34,14 @@ class mlp(nn.Module):
             in_dim (int): The input dimension of the MLP.
             hidden_dims (Union[int, List[int]]): The number of hidden neurons in the hidden layers.
             output_dim_per_session (Union[int, List[int]]): The output dimension of the MLP.
-            id_per_sess: Defaults to None, the ids of the sessions corresponding to the
+            id_per_session (Optional[np.ndarray]): Defaults to None, the ids of the sessions corresponding to the
                                                 various output layers.
             joint_decoder (bool): If True, uses a single output layer for all sessions. Default is False.
+            base_rate (float): Mean probability that a unit is active in one bin, used to set the
+                output bias to logit(base_rate) so that the initial prediction is that mean rather
+                than sigmoid(0) = 0.5 -- i.e. the null model co-smoothing scores against, rather
+                than a 50x overprediction of sparse spike trains. Only used when zero_init is
+                True. Default is 0., which zeroes the bias as before.
 
         Returns:
             None
@@ -54,10 +62,18 @@ class mlp(nn.Module):
         if joint_decoder:
             self.out_layers = nn.Linear(in_dim, int(output_dim_per_session))
         else:
+            if id_per_session is None:
+                id_per_session = np.arange(len(output_dim_per_session))
             self.out_layers = nn.ModuleDict({str(sess_id): nn.Linear(in_dim, output_dim)
                                             for sess_id, output_dim in zip(id_per_session, output_dim_per_session)})
 
         self.layers = nn.Sequential(*layers)
+
+        bias_init = np.log(base_rate / (1 - base_rate)) if base_rate > 0 else 0.
+        for layer in ([self.out_layers] if joint_decoder else self.out_layers.values()):
+            nn.init.zeros_(layer.weight)
+            nn.init.constant_(layer.bias, bias_init)
+
 
     def forward(self, x, sess_id: int = 0) -> torch.Tensor:
         sess_id = str(sess_id)
@@ -70,71 +86,12 @@ class mlp(nn.Module):
             return self.out_layers[sess_id](x)
         
 
-
-class linear_mlp(nn.Module):
-    def __init__(self,
-                 in_dim: int,
-                 hidden_dims: int,
-                 output_dim_per_session: Any,
-                 id_per_session: np.ndarray = np.array([0]),
-                 joint_decoder: bool = False) -> None:
-
-        """
-        Initialize a Multi-Layer Perceptron (MLP) with linear activations.
-
-        This MLP consists of an input layer, zero or more hidden layers, and an output layer.
-        Each layer is a fully connected, or dense, layer, meaning each neuron in one layer is connected to all neurons
-        in the previous layer. The last layer has either no activation function or log_softmax.
-
-        If the model is trained to encode more than one session via unsupervised learning, the decoder is given
-        one output layer for each to accommodate the varying output dimensions.
-
-        Args:
-            in_dim (int): The input dimension of the MLP.
-            hidden_dims (Union[int, List[int]]): The number of hidden neurons in the hidden layers.
-            output_dim_per_session (Union[int, List[int]]): The output dimension of the MLP.
-            id_per_sess: Defaults to None, the ids of the sessions corresponding to the
-                                                various output layers.
-            joint_decoder (bool): If True, uses a single output layer for all sessions. Default is False.
-
-        Returns:
-            None
-        """
-
-        super(linear_mlp, self).__init__()
-
-        self.joint_decoder = joint_decoder
-
-        layers = []
-
-        for h_dim in hidden_dims:
-            layers.append(nn.Linear(in_dim, h_dim))
-            in_dim = h_dim
-
-        if joint_decoder:
-            self.out_layers = nn.Linear(in_dim, int(output_dim_per_session))
-        else:
-            self.out_layers = nn.ModuleDict({str(sess_id): nn.Linear(in_dim, output_dim)
-                                            for sess_id, output_dim in zip(id_per_session, output_dim_per_session)})
-
-        self.layers = nn.Sequential(*layers)
-
-    def forward(self, x, sess_id: int = 0) -> torch.Tensor:
-        sess_id = str(sess_id)
-
-        x = self.layers(x)
-
-        if self.joint_decoder:
-            return self.out_layers(x)
-        else:
-            return self.out_layers[sess_id](x)
-
-
 class linear(nn.Module):
     def __init__(self, in_dim: int,
                  output_dim_per_session: Any,
                  id_per_session: Any = None,
-                 joint_decoder: bool = False) -> None:
+                 joint_decoder: bool = False,
+                 base_rate: float = 0.) -> None:
 
         """
         Initialize a  fully connected, or dense, layer, with either no activation function or log_softmax.
@@ -145,14 +102,22 @@ class linear(nn.Module):
         Args:
             in_dim (int): The input dimension of the MLP.
             output_dim_per_session (Union[int, List[int]]): The output dimension of the MLP.
-            id_per_sess (Optional[np.array]): Defaults to None, the ids of the sessions corresponding to the
+            id_per_session (Optional[np.ndarray]): Defaults to None, the ids of the sessions corresponding to the
                                                 various output layers.
             joint_decoder (bool): If True, uses a single output layer for all sessions. Default is False.
+            zero_init (bool): If True, zeroes the output weights so the initial prediction is the
+                constant given by the bias below, independent of the latents. Default is True,
+                matching `mlp` (note this differs from the layer's previous behaviour, which left
+                PyTorch's default initialisation in place).
+            base_rate (float): Mean probability that a unit is active in one bin, used to set the
+                output bias to logit(base_rate) so that the initial prediction is that mean rather
+                than sigmoid(0) = 0.5 -- i.e. the null model co-smoothing scores against, rather
+                than a 50x overprediction of sparse spike trains. Only used when zero_init is
+                True. Default is 0., which zeroes the bias.
 
         Returns:
             None
         """
-
         super(linear, self).__init__()
 
         self.joint_decoder = joint_decoder
@@ -160,8 +125,15 @@ class linear(nn.Module):
         if joint_decoder:
             self.out_layers = nn.Linear(in_dim, int(output_dim_per_session))
         else:
+            if id_per_session is None:
+                id_per_session = np.arange(len(output_dim_per_session))
             self.out_layers = nn.ModuleDict({str(sess_id): nn.Linear(in_dim, output_dim)
                                             for sess_id, output_dim in zip(id_per_session, output_dim_per_session)})
+
+        bias_init = np.log(base_rate / (1 - base_rate)) if base_rate > 0 else 0.
+        for layer in ([self.out_layers] if joint_decoder else self.out_layers.values()):
+            nn.init.zeros_(layer.weight)
+            nn.init.constant_(layer.bias, bias_init)
 
     def forward(self, x, sess_id: int = 0) -> torch.Tensor:
         sess_id = str(sess_id)

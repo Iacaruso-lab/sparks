@@ -4,17 +4,21 @@ import pickle
 import numpy as np
 import torch
 
+from allensdk.brain_observatory.ecephys.ecephys_project_cache import EcephysProjectCache
+
+from sparks.data.misc import normalize
+
 
 def get_train_test_indices(block, mode):
     if block == 'first':
-        if mode == 'unsupervised':
+        if mode in ['unsupervised', 'denoising']:
             train_indices = np.arange(10)
             test_indices = np.arange(10)
         else:
             train_indices = np.arange(9)
             test_indices = np.array([9])
     elif block == 'second':
-        if mode == 'unsupervised':
+        if mode in ['unsupervised', 'denoising']:
             train_indices = np.arange(10, 20)
             test_indices = np.arange(10, 20)
         else:
@@ -24,7 +28,7 @@ def get_train_test_indices(block, mode):
         train_indices = np.arange(10)
         test_indices = np.arange(10, 20)
     elif block == 'both':
-        if mode == 'unsupervised':
+        if mode in ['unsupervised', 'denoising']:
             train_indices = np.arange(20)
             test_indices = np.arange(20)
         else:
@@ -90,7 +94,7 @@ def make_spike_histogram(trial_idx, units_ids, spike_times, time_bin_edges):
 
         spikes_histogram.append(unit_histogram[None, :])
 
-    spikes_histogram = torch.from_numpy(np.vstack(spikes_histogram)).float()
+    spikes_histogram = torch.from_numpy(np.vstack(spikes_histogram).T).float()
 
     return spikes_histogram
 
@@ -183,3 +187,40 @@ def make_spikes_and_targets_split_gratings(spikes, units_ids, all_units_ids, tar
         targets_train = targets_train / np.max(targets_train, axis=0)
 
     return spikes_train, spikes_test, targets_train, targets_test
+
+
+def get_frame_indices_per_timestep(dt):
+    """
+    For each dt-sized timestep of a 30s natural movie recording, the index of the natural-movie
+    frame (30fps, 900 frames total) showing at that timestep. Shared by
+    AllenMoviesNpxDataset's 'prediction' target and get_frames's temporal resampling below, so
+    both line up on the exact same timestep -> frame mapping.
+    """
+    time_bin_edges = np.concatenate((np.arange(0, 30., dt), np.array([30.])))
+    frames_bin_edges = np.concatenate((np.arange(1 / 30, 30, 1 / 30), np.array([30.])))
+    return np.array([
+        np.where(time_bin_edges[i] <= frames_bin_edges)[0][0]
+        for i in range(1, len(time_bin_edges))
+    ])
+
+
+def get_frames(manifest_dir, mode, dt=0.01, ds=1):
+    """
+    Get frames for Allen Brain Observatory Visual coding natural movies data movie 1, resampled
+    from their native 30fps to the same dt-timestep resolution as the neural recording (each
+    native frame repeated for every dt-bin it's showing during) so it can be cropped/indexed
+    alongside the spikes with the same timestep indices.
+    """
+
+    if mode != 'reconstruction':
+        return None
+    else:
+        manifest_path = os.path.join(manifest_dir, "manifest.json")
+        cache = EcephysProjectCache.from_warehouse(manifest=manifest_path)
+
+        images = torch.tensor(cache.get_natural_movie_template(1)).float()
+        reduced_images = torch.nn.functional.max_pool2d(images, (ds, ds))
+        frames = normalize(reduced_images.flatten(1))
+
+        frame_indices_per_timestep = get_frame_indices_per_timestep(dt)
+        return frames[frame_indices_per_timestep]

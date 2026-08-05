@@ -17,7 +17,7 @@ class EphysAttentionLayer(DenseHebbianAttentionLayer):
     # single A100 (B=4, embed_dim=32) is between N=20 (parallel ~2.4x faster) and N=100 (parallel
     # ~4x *slower*, ~7x more peak memory) -- this threshold is a conservative default, not a
     # universal constant; benchmark on your own hardware/batch size if you need to retune it.
-    _PARALLEL_SCAN_MAX_N: int = 32
+    _PARALLEL_SCAN_MAX_N: int = 100
 
     def __init__(self,
                  n_neurons: int,
@@ -51,9 +51,8 @@ class EphysAttentionLayer(DenseHebbianAttentionLayer):
             latent_post_weight: The latent post synaptic weight.
             pre_tau_s: The pre synaptic time constant.
             post_tau_s: The post synaptic time constant.
-            v_proj (torch.nn.Linear): Output projection (D->D) applied after the STDP-weighted
-                                        sum over per-neuron values.
-            neuron_features (torch.nn.Parameter): Free, full-rank per-neuron value table.
+            v_proj (torch.nn.Linear): Output projection (N->D) applied directly to the STDP
+                                        coefficients.
         """
 
         super().__init__(n_neurons=n_neurons,
@@ -64,7 +63,7 @@ class EphysAttentionLayer(DenseHebbianAttentionLayer):
                          alpha=alpha,
                          **kwargs)
 
-    def stdp_coefficients(self, spikes: torch.Tensor) -> torch.Tensor:
+    def stdp_coefficients(self, spikes: torch.Tensor, state=None):
         """
         Compute the STDP coefficients for a given input spike tensor, dispatching between the
         parallel-scan and sequential-loop implementations based on the number of neurons (see
@@ -73,18 +72,24 @@ class EphysAttentionLayer(DenseHebbianAttentionLayer):
         Args:
             spikes (torch.Tensor): Tensor representation of the spikes from the neurons.
                                     It should be of shape [batch_size, n_timesteps, n_total_neurons].
+            state: Optional (stdp, pre_trace, post_trace) tuple from the end of a previous chunk,
+                used as the initial condition instead of zeros -- lets a long recording be
+                processed in consecutive chunks with continuous (rather than reset-per-chunk)
+                trace/STDP dynamics. Default is None (start from zero, as before).
 
         Returns:
-            torch.Tensor: The STDP coefficients tensor.
+            stdp_history: torch.Tensor, the STDP coefficients tensor.
+            new_state: (stdp, pre_trace, post_trace) tuple at the end of this chunk, to pass as
+                `state` for the next chunk.
         """
         if spikes.shape[-1] <= self._PARALLEL_SCAN_MAX_N:
-            return self._stdp_coefficients_parallel(spikes)
-        return self._stdp_coefficients_sequential(spikes)
+            return self._stdp_coefficients_parallel(spikes, state=state)
+        return self._stdp_coefficients_sequential(spikes, state=state)
 
-    def _stdp_coefficients_parallel(self, spikes: torch.Tensor) -> torch.Tensor:
+    def _stdp_coefficients_parallel(self, spikes: torch.Tensor, state=None):
         raise NotImplementedError("This method should be implemented in subclasses.")
 
-    def _stdp_coefficients_sequential(self, spikes: torch.Tensor) -> torch.Tensor:
+    def _stdp_coefficients_sequential(self, spikes: torch.Tensor, state=None):
         raise NotImplementedError("This method should be implemented in subclasses.")
     
     def get_parameters(self):
@@ -128,9 +133,8 @@ class FullEphysAttentionLayer(EphysAttentionLayer):
             latent_post_weight: The latent post synaptic weight.
             pre_tau_s: The pre synaptic time constant.
             post_tau_s: The post synaptic time constant.
-            v_proj (torch.nn.Linear): Output projection (D->D) applied after the STDP-weighted
-                                        sum over per-neuron values.
-            neuron_features (torch.nn.Parameter): Free, full-rank per-neuron value table.
+            v_proj (torch.nn.Linear): Output projection (N->D) applied directly to the STDP
+                                        coefficients.
         """
 
         super().__init__(n_neurons=n_neurons,
@@ -144,7 +148,7 @@ class FullEphysAttentionLayer(EphysAttentionLayer):
         self._decay_init()
         self._init_update_weights()
 
-    def _stdp_coefficients_sequential(self, spikes: torch.Tensor) -> torch.Tensor:
+    def _stdp_coefficients_sequential(self, spikes: torch.Tensor, state=None):
         """
         Original O(T) sequential-loop implementation. Preferred over the parallel scan when N is
         large enough that per-step compute dominates kernel-dispatch latency (see
@@ -153,32 +157,32 @@ class FullEphysAttentionLayer(EphysAttentionLayer):
         B, T, N = spikes.shape
 
         stdp_history = torch.empty((B, T, N, N), device=spikes.device, dtype=spikes.dtype)
-        stdp = torch.zeros(B, N, N, device=spikes.device, dtype=spikes.dtype)  # Initialize STDP coefficients tensor
-        pre_trace = torch.zeros(B, N, N, device=spikes.device, dtype=spikes.dtype)  # Initialize pre-synaptic trace
-        post_trace = torch.zeros(B, N, N, device=spikes.device, dtype=spikes.dtype)  # Initialize post-synaptic trace
+        if state is None:
+            stdp = torch.zeros(B, N, N, device=spikes.device, dtype=spikes.dtype)
+            pre_trace = torch.zeros(B, N, N, device=spikes.device, dtype=spikes.dtype)
+            post_trace = torch.zeros(B, N, N, device=spikes.device, dtype=spikes.dtype)
+        else:
+            stdp, pre_trace, post_trace = state
 
         decay_pre, decay_post, w_pre, w_post = self.get_parameters()
 
         for t in range(T):
             pre_spikes, post_spikes = self.get_pre_post_spikes(spikes[:, t])
 
-            pre_trace.mul_(decay_pre)
-            post_trace.mul_(decay_post)
+            pre_trace = pre_trace * decay_pre
+            post_trace = post_trace * decay_post
 
             stdp = stdp + (1. - stdp) * (pre_trace * post_spikes) - stdp * (post_trace * pre_spikes)
-            stdp.clamp_(-0.5, 1.5) # Clamping to prevent extreme values
+            stdp = stdp.clamp(-0.5, 1.5) # Clamping to prevent extreme values
 
-            pre_trace.add_(pre_spikes * w_pre)
-            post_trace.add_(post_spikes * w_post)
+            pre_trace = pre_trace + pre_spikes * w_pre
+            post_trace = post_trace + post_spikes * w_post
 
             stdp_history[:, t] = stdp
 
-        if torch.isnan(stdp_history).any():
-            raise ValueError("NaN values detected in attention coefficients.")
+        return stdp_history, (stdp, pre_trace, post_trace)
 
-        return stdp_history
-
-    def _stdp_coefficients_parallel(self, spikes: torch.Tensor) -> torch.Tensor:
+    def _stdp_coefficients_parallel(self, spikes: torch.Tensor, state=None):
         """
         Exact O(log T) parallel-scan implementation. Preferred when N is small enough that
         Python/kernel-dispatch latency (not per-step compute) is the bottleneck (see
@@ -186,24 +190,31 @@ class FullEphysAttentionLayer(EphysAttentionLayer):
         """
         decay_pre, decay_post, w_pre, w_post = self.get_parameters()  # each [1, N, N]
 
-        pre_spikes_seq = spikes.unsqueeze(2)   # [B, T, 1, N]
-        post_spikes_seq = spikes.unsqueeze(3)  # [B, T, N, 1]
+        stdp_init = pre_trace_init = post_trace_init = None
+        if state is not None:
+            stdp_init, pre_trace_init, post_trace_init = state
+
+        pre_spikes_seq = spikes.unsqueeze(3)   # [B, T, N, 1] -- pre-synaptic in rows
+        post_spikes_seq = spikes.unsqueeze(2)  # [B, T, 1, N] -- post-synaptic in columns
 
         # pre_trace / post_trace are pure leaky integrators (x_t = decay * x_{t-1} + w * spike_t):
         # an exact affine recurrence with no per-step nonlinearity, so it admits a closed-form
         # O(log T) parallel scan instead of the original O(T) sequential mul_/add_ loop.
         b_pre = w_pre.unsqueeze(1) * pre_spikes_seq      # [B, T, N, N]
         a_pre = decay_pre.unsqueeze(1).expand_as(b_pre)
-        pre_trace = parallel_affine_scan(a_pre, b_pre)   # pre_trace[:, t] = value right after spike t
+        pre_trace = parallel_affine_scan(a_pre, b_pre, x_init=pre_trace_init)   # pre_trace[:, t] = value right after spike t
 
         b_post = w_post.unsqueeze(1) * post_spikes_seq   # [B, T, N, N]
         a_post = decay_post.unsqueeze(1).expand_as(b_post)
-        post_trace = parallel_affine_scan(a_post, b_post)
+        post_trace = parallel_affine_scan(a_post, b_post, x_init=post_trace_init)
 
         # the STDP update reads the trace *before* incorporating the current spike, i.e. the
-        # decayed value of the previous step's trace (pre_trace_{t-1} = 0 at t=0)
-        pre_trace_prev = torch.cat([torch.zeros_like(pre_trace[:, :1]), pre_trace[:, :-1]], dim=1)
-        post_trace_prev = torch.cat([torch.zeros_like(post_trace[:, :1]), post_trace[:, :-1]], dim=1)
+        # decayed value of the previous step's trace (pre_trace_{t-1} = 0 at t=0, or the carried
+        # -in state from the end of the previous chunk)
+        pre_trace_prev_first = pre_trace_init.unsqueeze(1) if pre_trace_init is not None else torch.zeros_like(pre_trace[:, :1])
+        post_trace_prev_first = post_trace_init.unsqueeze(1) if post_trace_init is not None else torch.zeros_like(post_trace[:, :1])
+        pre_trace_prev = torch.cat([pre_trace_prev_first, pre_trace[:, :-1]], dim=1)
+        post_trace_prev = torch.cat([post_trace_prev_first, post_trace[:, :-1]], dim=1)
         pre_trace_mid = decay_pre.unsqueeze(1) * pre_trace_prev
         post_trace_mid = decay_post.unsqueeze(1) * post_trace_prev
 
@@ -217,12 +228,9 @@ class FullEphysAttentionLayer(EphysAttentionLayer):
         # the per-step clamp is a genuine nonlinearity and can't be folded into the closed-form
         # scan, so this residual pass stays sequential -- but each iteration is now a single
         # fused multiply-add-clamp instead of the original full trace-decay-and-update.
-        stdp_history = clamped_affine_scan(a_stdp, b_stdp, min_val=-0.5, max_val=1.5)
+        stdp_history = clamped_affine_scan(a_stdp, b_stdp, min_val=-0.5, max_val=1.5, x_init=stdp_init)
 
-        if torch.isnan(stdp_history).any():
-            raise ValueError("NaN values detected in attention coefficients.")
-
-        return stdp_history
+        return stdp_history, (stdp_history[:, -1], pre_trace[:, -1], post_trace[:, -1])
 
     def _decay_init(self):
         """"
@@ -300,9 +308,8 @@ class LightEphysAttentionLayer(EphysAttentionLayer):
             latent_post_weight: The latent post synaptic weight.
             pre_tau_s: The pre synaptic time constant.
             post_tau_s: The post synaptic time constant.
-            v_proj (torch.nn.Linear): Output projection (D->D) applied after the STDP-weighted
-                                        sum over per-neuron values.
-            neuron_features (torch.nn.Parameter): Free, full-rank per-neuron value table.
+            v_proj (torch.nn.Linear): Output projection (N->D) applied directly to the STDP
+                                        coefficients.
         """
 
         super().__init__(n_neurons=n_neurons,
@@ -313,7 +320,7 @@ class LightEphysAttentionLayer(EphysAttentionLayer):
                          alpha=alpha,
                          **kwargs)
 
-    def _stdp_coefficients_sequential(self, spikes: torch.Tensor) -> torch.Tensor:
+    def _stdp_coefficients_sequential(self, spikes: torch.Tensor, state=None):
         """
         Original O(T) sequential-loop implementation. Preferred over the parallel scan when N is
         large enough that per-step compute dominates kernel-dispatch latency (see
@@ -322,32 +329,32 @@ class LightEphysAttentionLayer(EphysAttentionLayer):
         B, T, N = spikes.shape
 
         stdp_history = torch.empty((B, T, N, N), device=spikes.device, dtype=spikes.dtype)
-        stdp = torch.zeros(B, N, N, device=spikes.device, dtype=spikes.dtype)  # Initialize STDP coefficients tensor
-        pre_trace = torch.zeros(B, 1, N, device=spikes.device, dtype=spikes.dtype)  # Initialize pre-synaptic trace
-        post_trace = torch.zeros(B, N, 1, device=spikes.device, dtype=spikes.dtype)  # Initialize post-synaptic trace
+        if state is None:
+            stdp = torch.zeros(B, N, N, device=spikes.device, dtype=spikes.dtype)
+            pre_trace = torch.zeros(B, N, 1, device=spikes.device, dtype=spikes.dtype)
+            post_trace = torch.zeros(B, 1, N, device=spikes.device, dtype=spikes.dtype)
+        else:
+            stdp, pre_trace, post_trace = state
 
         decay_pre, decay_post, w_pre, w_post = self.get_parameters()
 
         for t in range(T):
             pre_spikes, post_spikes = self.get_pre_post_spikes(spikes[:, t])
 
-            pre_trace.mul_(decay_pre)
-            post_trace.mul_(decay_post)
+            pre_trace = pre_trace * decay_pre
+            post_trace = post_trace * decay_post
 
             stdp = stdp + (1. - stdp) * (pre_trace * post_spikes) - stdp * (post_trace * pre_spikes)
-            stdp.clamp_(-0.5, 1.5) # Clamping to prevent extreme values
+            stdp = stdp.clamp(-0.5, 1.5) # Clamping to prevent extreme values
 
-            pre_trace.add_(pre_spikes * w_pre)
-            post_trace.add_(post_spikes * w_post)
+            pre_trace = pre_trace + pre_spikes * w_pre
+            post_trace = post_trace + post_spikes * w_post
 
             stdp_history[:, t] = stdp
 
-        if torch.isnan(stdp_history).any():
-            raise ValueError("NaN values detected in attention coefficients.")
+        return stdp_history, (stdp, pre_trace, post_trace)
 
-        return stdp_history
-
-    def _stdp_coefficients_parallel(self, spikes: torch.Tensor) -> torch.Tensor:
+    def _stdp_coefficients_parallel(self, spikes: torch.Tensor, state=None):
         """
         Exact O(log T) parallel-scan implementation. Preferred when N is small enough that
         Python/kernel-dispatch latency (not per-step compute) is the bottleneck (see
@@ -355,36 +362,39 @@ class LightEphysAttentionLayer(EphysAttentionLayer):
         """
         decay_pre, decay_post, w_pre, w_post = self.get_parameters()  # scalars
 
-        pre_spikes_seq = spikes.unsqueeze(2)   # [B, T, 1, N]
-        post_spikes_seq = spikes.unsqueeze(3)  # [B, T, N, 1]
+        stdp_init = pre_trace_init = post_trace_init = None
+        if state is not None:
+            stdp_init, pre_trace_init, post_trace_init = state
 
-        # pre_trace / post_trace stay in their lighter (B, T, 1, N) / (B, T, N, 1) shape here
+        pre_spikes_seq = spikes.unsqueeze(3)   # [B, T, N, 1] -- pre-synaptic in rows
+        post_spikes_seq = spikes.unsqueeze(2)  # [B, T, 1, N] -- post-synaptic in columns
+
+        # pre_trace / post_trace stay in their lighter (B, T, N, 1) / (B, T, 1, N) shape here
         # (that's the whole point of the "light" variant) -- only the final STDP tensor below
         # needs the full (B, T, N, N) shape.
-        b_pre = w_pre * pre_spikes_seq                    # [B, T, 1, N]
+        b_pre = w_pre * pre_spikes_seq                    # [B, T, N, 1]
         a_pre = decay_pre.expand_as(b_pre)
-        pre_trace = parallel_affine_scan(a_pre, b_pre)
+        pre_trace = parallel_affine_scan(a_pre, b_pre, x_init=pre_trace_init)
 
-        b_post = w_post * post_spikes_seq                 # [B, T, N, 1]
+        b_post = w_post * post_spikes_seq                 # [B, T, 1, N]
         a_post = decay_post.expand_as(b_post)
-        post_trace = parallel_affine_scan(a_post, b_post)
+        post_trace = parallel_affine_scan(a_post, b_post, x_init=post_trace_init)
 
-        pre_trace_prev = torch.cat([torch.zeros_like(pre_trace[:, :1]), pre_trace[:, :-1]], dim=1)
-        post_trace_prev = torch.cat([torch.zeros_like(post_trace[:, :1]), post_trace[:, :-1]], dim=1)
+        pre_trace_prev_first = pre_trace_init.unsqueeze(1) if pre_trace_init is not None else torch.zeros_like(pre_trace[:, :1])
+        post_trace_prev_first = post_trace_init.unsqueeze(1) if post_trace_init is not None else torch.zeros_like(post_trace[:, :1])
+        pre_trace_prev = torch.cat([pre_trace_prev_first, pre_trace[:, :-1]], dim=1)
+        post_trace_prev = torch.cat([post_trace_prev_first, post_trace[:, :-1]], dim=1)
         pre_trace_mid = decay_pre * pre_trace_prev
         post_trace_mid = decay_post * post_trace_prev
 
-        A = pre_trace_mid * post_spikes_seq   # [B, T, 1, N] * [B, T, N, 1] -> [B, T, N, N]
-        C = post_trace_mid * pre_spikes_seq   # [B, T, N, 1] * [B, T, 1, N] -> [B, T, N, N]
+        A = pre_trace_mid * post_spikes_seq   # [B, T, N, 1] * [B, T, 1, N] -> [B, T, N, N]
+        C = post_trace_mid * pre_spikes_seq   # [B, T, 1, N] * [B, T, N, 1] -> [B, T, N, N]
         a_stdp = 1. - A - C
         b_stdp = A
 
-        stdp_history = clamped_affine_scan(a_stdp, b_stdp, min_val=-0.5, max_val=1.5)
+        stdp_history = clamped_affine_scan(a_stdp, b_stdp, min_val=-0.5, max_val=1.5, x_init=stdp_init)
 
-        if torch.isnan(stdp_history).any():
-            raise ValueError("NaN values detected in attention coefficients.")
-
-        return stdp_history
+        return stdp_history, (stdp_history[:, -1], pre_trace[:, -1], post_trace[:, -1])
 
     def get_parameters(self):
         """

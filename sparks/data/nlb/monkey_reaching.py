@@ -24,7 +24,7 @@ def process_dataset(dataset_path, mode='prediction', y_keys: str = 'hand_pos'):
     align_field = 'move_onset_time'
 
     lag_align_range = (align_range[0] + lag, align_range[1] + lag)
-    
+
     if y_keys != 'direction':
         dataset.data[y_keys] = (dataset.data[y_keys] - dataset.data[y_keys].min()) / (dataset.data[y_keys].max() - dataset.data[y_keys].min())
 
@@ -69,17 +69,18 @@ def make_monkey_reaching_dataset(dataset_path: os.path,
                                  y_keys: str = 'hand_pos',
                                  mode: str = 'prediction',
                                  batch_size: int = 32,
-                                 smooth: bool = False):
+                                 smooth: bool = False,
+                                 num_workers: int = 0):
 
     inputs_train, inputs_test, targets_train, targets_test = process_dataset(dataset_path,
                                                                              mode=mode,
                                                                              y_keys=y_keys)
 
     train_dataset = MonkeyReachingDataset(inputs_train, targets_train, y_keys, mode=mode, smooth=smooth)
-    train_dl = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    train_dl = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
     test_dataset = MonkeyReachingDataset(inputs_test, targets_test, y_keys, mode=mode, smooth=smooth)
-    test_dl = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+    test_dl = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
     return train_dataset, test_dataset, train_dl, test_dl
 
@@ -125,10 +126,10 @@ class MonkeyReachingDataset(BaseDataset):
         if mode == 'co-smoothing':
             # Target is all neurons: concatenate 'spikes' (train) and 'heldout_spikes' (test)
             y_dim = target_data[0]['spikes'].shape[-1] + target_data[0]['heldout_spikes'].shape[-1]
+            self.heldout_neurons = np.arange(target_data[0]['spikes'].shape[-1], target_data[0]['spikes'].shape[-1] + target_data[0]['heldout_spikes'].shape[-1])
             target_data = np.vstack([
                 np.concatenate([target_data[i]['spikes'].to_numpy(), target_data[i]['heldout_spikes'].to_numpy()], axis=-1).reshape([-1, T, y_dim])
                 for i in range(len(target_data))])
-            self.heldout_neurons = np.arange(target_data[0]['spikes'].shape[-1], target_data[0]['spikes'].shape[-1] + target_data[0]['heldout_spikes'].shape[-1])
         elif y_keys == 'direction':
             target_data = np.vstack([np.ones([len(target_data[i]['spikes'].to_numpy().reshape([-1, T, x_dim])), T]) * i
                                      for i in range(len(target_data))])

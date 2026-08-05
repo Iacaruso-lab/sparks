@@ -1,6 +1,5 @@
 from dataclasses import dataclass, field
-import numpy as np
-from typing import Optional, Type, Dict, Any
+from typing import List, Optional, Type, Union, Dict, Any
 from torch import nn
 
 from sparks.models.blocks import HebbianAttentionBlock, AttentionBlock
@@ -10,11 +9,11 @@ from sparks.models.blocks import HebbianAttentionBlock, AttentionBlock
 class HebbianAttentionConfig:
     """Configuration for the Hebbian Attention Block."""
     block_class: Type[nn.Module] = HebbianAttentionBlock
-    tau_s: float = 1.0
+    tau_s: Union[float, List[float]] = 1.0 # Single float = one Hebbian attention head; a list gives one head per tau_s
     n_heads: int = 1 # Number of attention heads for perceiver multi-head attention
     dropout: float = 0.
     drop_path: float = 0. # Stochastic depth rate for the block's residual connections
-    use_latent_self_attn: bool = True # If True, the Perceiver's K latents self-attend after cross-attention
+    use_linear_attn: bool = True # If True, the Perceiver reads via a recurrent linear-attention state instead of softmax cross-attention
     dt: float = 0.001      # Default value for the time-step in ms
     w_plus: float = 0.001
     alpha: float = 1.1
@@ -22,8 +21,9 @@ class HebbianAttentionConfig:
     sliding: bool = False # Whether to use sliding windows
     window_size: int = 1 # The size of the sliding window
     block_size: int = 1 # The size of the block for the attention mechanism in sliding mode
-    min_attn_value: float = -np.inf # Minimum value for attention coefficients
-    max_attn_value: float = np.inf # Maximum value for attention coefficients
+    min_attn_value: float = -10. # Minimum value for attention coefficients (only consumed by calcium; ephys's clamp is hardcoded)
+    max_attn_value: float = 10. # Maximum value for attention coefficients (only consumed by calcium; ephys's clamp is hardcoded)
+    n_timescales: int = 5 # Number of log-spaced (10ms-1s) decay timescales for the calcium multi-timescale fluorescence trace
     config: str = 'light' # 'full', 'light', or 'sparse' to specify the type of Hebbian attention block
     params: Dict[str, Any] = field(default_factory=dict)
 
@@ -41,13 +41,14 @@ class HebbianAttentionConfig:
             'alpha': self.alpha,
             'dropout': self.dropout,
             'drop_path': self.drop_path,
-            'use_latent_self_attn': self.use_latent_self_attn,
+            'use_linear_attn': self.use_linear_attn,
             'data_type': self.data_type,
             'sliding': self.sliding,
             'window_size': self.window_size,
             'block_size': self.block_size,
             'min_attn_value': self.min_attn_value,
             'max_attn_value': self.max_attn_value,
+            'n_timescales': self.n_timescales,
             'config': self.config
         }
 

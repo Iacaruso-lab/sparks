@@ -1,13 +1,21 @@
+from typing import Optional
+
 import torch
 
 
-def parallel_affine_scan(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+def parallel_affine_scan(a: torch.Tensor, b: torch.Tensor,
+                         x_init: Optional[torch.Tensor] = None) -> torch.Tensor:
     """
-    Exact, parallel solution to the affine recurrence x_t = a_t * x_{t-1} + b_t, x_{-1} = 0,
-    for every t simultaneously, via an inclusive Hillis-Steele scan over dim=1 (time).
+    Exact, parallel solution to the affine recurrence x_t = a_t * x_{t-1} + b_t, x_{-1} = x_init
+    (0 if not given), for every t simultaneously, via an inclusive Hillis-Steele scan over dim=1
+    (time).
 
     Args:
         a, b: Tensors of identical shape [B, T, ...]. `T` is scanned along dim=1.
+        x_init: Optional tensor of shape [B, ...] (a/b without the T dim) -- the value of
+            x_{-1}, e.g. to carry a recurrent state across a chunk boundary. Folded into b's
+            first timestep (x_0 = a_0*x_init + b_0 is exactly what the recurrence would give
+            with x_{-1}=x_init), so the scan itself is otherwise untouched.
 
     Returns:
         Tensor of the same shape as `a`/`b`, holding x_t at index t along dim=1.
@@ -15,6 +23,9 @@ def parallel_affine_scan(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     Cost: O(log2(T)) sequential steps, each a handful of elementwise ops over the full
     [B, T, ...] tensor, instead of T sequential steps over [B, ...] tensors.
     """
+    if x_init is not None:
+        b = torch.cat([b[:, :1] + a[:, :1] * x_init.unsqueeze(1), b[:, 1:]], dim=1)
+
     a = a.clone()
     b = b.clone()
     T = a.shape[1]
@@ -36,9 +47,11 @@ def parallel_affine_scan(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
 
 def clamped_affine_scan(a: torch.Tensor, b: torch.Tensor,
                          min_val: float = -float('inf'),
-                         max_val: float = float('inf')) -> torch.Tensor:
+                         max_val: float = float('inf'),
+                         x_init: Optional[torch.Tensor] = None) -> torch.Tensor:
     """
-    Solves x_t = clamp(a_t * x_{t-1} + b_t, min_val, max_val), x_{-1} = 0, for every t.
+    Solves x_t = clamp(a_t * x_{t-1} + b_t, min_val, max_val), x_{-1} = x_init (0 if not given),
+    for every t.
 
     When min_val/max_val are +-inf the clamp is a no-op and this reduces to the exact
     parallel scan above (O(log T), no Python loop). Otherwise, the per-step clamp is a
@@ -47,9 +60,12 @@ def clamped_affine_scan(a: torch.Tensor, b: torch.Tensor,
     vectorized over T upstream of this call, so each iteration here is a single fused
     multiply-add-clamp rather than a full trace-decay-and-update, which is what made the
     original per-timestep Python loop expensive.
+
+    x_init: Optional tensor of shape [B, ...] (a/b without the T dim) -- the value of x_{-1},
+        e.g. to carry a recurrent state across a chunk boundary.
     """
     if min_val == -float('inf') and max_val == float('inf'):
-        return parallel_affine_scan(a, b)
+        return parallel_affine_scan(a, b, x_init=x_init)
 
     B, T = a.shape[0], a.shape[1]
     # a/b are frequently broadcast views (e.g. a constant decay expanded over T); materializing
@@ -57,7 +73,7 @@ def clamped_affine_scan(a: torch.Tensor, b: torch.Tensor,
     a = a.expand(B, T, *b.shape[2:]).contiguous()
     b = b.contiguous()
 
-    x = torch.zeros_like(b[:, 0])
+    x = x_init if x_init is not None else torch.zeros_like(b[:, 0])
     out = torch.empty_like(b)
     for t in range(T):
         x = torch.clamp(a[:, t] * x + b[:, t], min=min_val, max=max_val)

@@ -62,11 +62,13 @@ def sorting_xcorr(spikes, maxlag, downsampling_factor, dt_sf):
 
 
 def make_mec_ca_dataset(spikes_file,
-                        start_stop_times: np.ndarray,
+                        start_stop_times_train: np.ndarray,
+                        start_stop_times_test: np.ndarray,
                         downsampling_factor: int = 1,
-                        train: bool = True,
+                        p_left_out: float = 0.0,
                         num_workers: int = 0,
-                        batch_size: int = 1):
+                        batch_size: int = 1,
+                        seed: int = None):
 
     """
     Creates datasets and data loaders for the MEC data.
@@ -86,11 +88,24 @@ def make_mec_ca_dataset(spikes_file,
     fs_120 = 7.73
     fs = fs_120 / downsampling_factor
 
-    spikes_downsampled = spikes_downsample(spikes, downsampling_factor, mode='max')
-    dataset = MECDataset(spikes_downsampled, start_stop_times, fs)
-    dl = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=train, num_workers=num_workers)
+    spikes = spikes_downsample(spikes, downsampling_factor, mode='max')
 
-    return dataset, dl
+    if seed is not None:
+        np.random.seed(seed)
+
+    if p_left_out > 0:
+        num_neurons = spikes.shape[0]
+        num_left_out = int(num_neurons * p_left_out)
+        left_out_indices = np.random.choice(num_neurons, num_left_out, replace=False)
+    else:
+        left_out_indices = None
+
+    train_dataset = MECDataset(spikes, start_stop_times_train, fs)
+    test_dataset = MECDataset(spikes, start_stop_times_test, fs)
+    train_dl = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    test_dl = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+
+    return train_dataset, train_dl, test_dataset, test_dl, left_out_indices
 
 
 class MECDataset(BaseDataset):
@@ -112,7 +127,7 @@ class MECDataset(BaseDataset):
 
         self.fs = fs
         self.start_stop_times = start_stop_times
-        self.spikes = spikes
+        self.spikes = torch.tensor(spikes.transpose(1, 0)).float()
 
         self.min_length = np.min([int(self.start_stop_times[i][1] * self.fs)
                                   - int(self.start_stop_times[i][0] * self.fs) for i in range(len(start_stop_times))])
@@ -121,7 +136,6 @@ class MECDataset(BaseDataset):
         """ """
         return len(self.start_stop_times)
 
-
     def get_spikes(self, index: int) -> torch.tensor:
         """
         :param: index: int
@@ -129,10 +143,10 @@ class MECDataset(BaseDataset):
         :return: spikes histogram for the given index
         """
 
-        spikes = self.spikes[:, int(self.start_stop_times[index][0] * self.fs):
-                                int(self.start_stop_times[index][1] * self.fs)].astype(np.float32)
-
-        return torch.tensor(spikes[:, :self.min_length])
+        start_idx = int(self.start_stop_times[index][0] * self.fs)
+        stop_idx = start_idx + self.min_length
+        
+        return self.spikes[start_idx:stop_idx]
 
     def get_target(self, index: int):
         return torch.tensor([index])

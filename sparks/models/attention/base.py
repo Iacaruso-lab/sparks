@@ -1,12 +1,12 @@
 
 from typing import Tuple
 
-import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from sparks.models.attention.scan import parallel_affine_scan
+from sparks.models.utils import detach_state
 
 
 class BaseHebbianAttentionLayer(nn.Module):
@@ -49,7 +49,6 @@ class BaseHebbianAttentionLayer(nn.Module):
                                     It should be of shape [n_total_neurons, n_timesteps].
 
         """
-
         raise NotImplementedError("This method should be implemented in subclasses.")
 
     def get_pre_post_spikes(self, spikes: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -90,7 +89,7 @@ class DenseHebbianAttentionLayer(BaseHebbianAttentionLayer):
             alpha (float): The scaling factor for the post-synaptic weight.
     
     """
-
+    
     def __init__(self,
                  n_neurons: int,
                  embed_dim: int,
@@ -107,52 +106,30 @@ class DenseHebbianAttentionLayer(BaseHebbianAttentionLayer):
                          w_plus=w_plus,
                          alpha=alpha)
 
-        # Real attention: STDP scores (dynamic, content-dependent) weight a sum over per-neuron
-        # value vectors, followed by an output projection. v_proj is D->D and therefore
-        # N-agnostic (shareable/pretrainable across sessions with different neuron counts);
-        # neuron_features is the one N-dependent piece, a free, full-rank (N*D params) per-neuron
-        # value table -- content-dependent EMA-based alternatives (smoothed firing rate,
-        # multi-timescale variants, combining both with this) were tried and none beat this
-        # simpler version.
-        self.v_proj = nn.Linear(self.embed_dim, self.embed_dim)
-        self.neuron_features = nn.Parameter(torch.randn(1, 1, n_neurons, embed_dim) * (1.0 / math.sqrt(embed_dim)))
+        self.v_proj = nn.Linear(self.n_neurons, self.embed_dim)
+        self._carried_state = None
 
-        # Per-neuron EMA gate: stdp already captures precise, dynamic, per-neuron-pair
-        # interactions, and neuron_features is each neuron's static characteristic contribution --
-        # this adds each neuron's own smoothed recent activity as a multiplicative gain on its own
-        # value, rather than one population-wide signal shared by every neuron. Unlike the earlier
-        # per-neuron multi-timescale value_proj input (which stacked several EMA channels into a
-        # shared Linear layer and produced a condition number > 10^7 among them), this is safe by
-        # construction: a single EMA per neuron feeding a scalar sigmoid gate, multiplicatively
-        # rescaling the already-full-rank neuron_features -- there's no shared linear layer for
-        # correlated channels to destabilize, and no rank-bottlenecking of the value itself (the
-        # gate only rescales an existing full-rank vector, it doesn't replace it with an MLP output).
-        self.rate_delta_scale = self.dt / self.tau_s
-        # softplus(latent_init) = 1.0 (inverse-softplus trick, same pattern as the STDP decay
-        # parameters), so decay_init = exp(-1.0 * dt/tau_s) -- the same biologically-motivated
-        # timescale used throughout this layer. Now per-neuron (1, 1, N), not a shared scalar --
-        # different neurons may have genuinely different intrinsic activity timescales, and this
-        # only adds O(N) parameters (negligible next to everything else in the model). Small
-        # symmetry-breaking noise around the shared init, same convention as the STDP decay
-        # parameters in ephys.py/calcium.py, so gradients don't start out identical across neurons.
-        latent_gate_delta_init = math.log(math.exp(1.0) - 1.0)
-        self.latent_gate_delta = nn.Parameter(
-            torch.full((1, 1, n_neurons), latent_gate_delta_init)
-            + torch.randn(1, 1, n_neurons) * latent_gate_delta_init * 0.1
-        )
-        self.gate_scale = nn.Parameter(torch.tensor(1.0))
-        self.gate_bias = nn.Parameter(torch.tensor(0.0))
+    def forward(self, spikes, carry_state: bool = False):
+        """
+        Args:
+            spikes: see stdp_coefficients.
+            carry_state: If True, uses this layer's STDP/trace state from the end of the
+                previous forward() call as the initial condition instead of zeros, and stores
+                the (detached) state at the end of this call for the next one -- lets a long
+                recording be walked through in consecutive chunks with continuous dynamics
+                instead of resetting to zero at every chunk boundary. State is detached before
+                being stored, so gradients don't flow back across chunks (truncated BPTT).
+                Default is False (matches the original, stateless-per-call behavior). Call
+                reset_state() before the first chunk of a new, unrelated sequence.
+        """
+        state = self._carried_state if carry_state else None
+        stdp, new_state = self.stdp_coefficients(spikes, state=state)
+        self._carried_state = detach_state(new_state)
+        return self.v_proj(stdp)  # [B, T, N, D] — real scores
 
-    def forward(self, spikes):
-        stdp = self.stdp_coefficients(spikes)                             # [B, T, N, N]
+    def reset_state(self):
+        self._carried_state = None
 
-        decay = torch.exp(-F.softplus(self.latent_gate_delta) * self.rate_delta_scale)  # [1, 1, N], each in (0, 1)
-        per_neuron_rate = parallel_affine_scan(decay.expand_as(spikes), (1. - decay) * spikes)  # [B, T, N]
-        gate = torch.sigmoid(self.gate_scale * per_neuron_rate + self.gate_bias).unsqueeze(-1)  # [B, T, N, 1]
-
-        V = self.neuron_features * gate                                   # [B, T, N, D], broadcast over D only
-        return self.v_proj(torch.matmul(stdp, V))                         # [B, T, N, D] — real scores @ gated values
-    
     def get_pre_post_spikes(self, spikes: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Get the pre and post synaptic spikes from the input spikes tensor.
@@ -163,7 +140,11 @@ class DenseHebbianAttentionLayer(BaseHebbianAttentionLayer):
         Returns:
             Tuple[torch.Tensor, torch.Tensor]: Pre-synaptic spikes and post-synaptic spikes.
         """
-        pre_spikes = spikes.unsqueeze(1) # [batch_size, 1, n_neurons]
-        post_spikes = spikes.unsqueeze(2) # [batch_size, n_neurons, 1]
+        pre_spikes = spikes.unsqueeze(2) # [batch_size, 1, n_neurons]
+        post_spikes = spikes.unsqueeze(1) # [batch_size, n_neurons, 1]
 
         return pre_spikes, post_spikes
+
+
+
+
