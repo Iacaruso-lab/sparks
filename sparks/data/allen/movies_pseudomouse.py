@@ -15,8 +15,7 @@ def make_npx_dataset_and_dl(spikes: dict,
                             num_workers: int = 0,
                             batch_size: int = 1,
                             shuffle_dl: bool = True,
-                            mode: str = 'prediction',
-                            frames: Optional[torch.Tensor] = None):
+                            mode: str = 'prediction'):
     """"
     Create dataset and dataloader for given spikes and indices
 
@@ -41,7 +40,7 @@ def make_npx_dataset_and_dl(spikes: dict,
     """
 
     spikes_dict = make_spikes_dict(spikes, indices, correct_units_ids)
-    dataset = AllenMoviesNpxDataset(spikes_dict, correct_units_ids, dt, mode=mode, frames=frames)
+    dataset = AllenMoviesNpxDataset(spikes_dict, correct_units_ids, dt, mode=mode)
     dl = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=shuffle_dl, num_workers=num_workers)
 
     return dataset, dl
@@ -57,8 +56,7 @@ def make_npx_dataset_and_dls(data_dir: os.path,
                              num_workers: int = 0,
                              batch_size: int = 1,
                              correct_units_ids: np.ndarray = None,
-                             seed: int = None,
-                             frames: Optional[torch.Tensor] = None):
+                             seed: int = None):
     """
     Loads train/test datasets and creates dataloaders for neuropixels data.
 
@@ -109,11 +107,10 @@ def make_npx_dataset_and_dls(data_dir: os.path,
     train_indices, test_indices = get_train_test_indices(block, mode)
     train_dataset, train_dl = make_npx_dataset_and_dl(all_spikes, train_indices, correct_units_ids,
                                                       dt, num_workers, batch_size, shuffle_dl=True,
-                                                      mode=mode, frames=frames)
+                                                      mode=mode)
 
     test_dataset, test_dl = make_npx_dataset_and_dl(all_spikes, test_indices, correct_units_ids,
-                                                    dt, num_workers, batch_size, shuffle_dl=False,
-                                                    mode=mode, frames=frames)
+                                                    dt, num_workers, batch_size, shuffle_dl=False, mode=mode)
 
     return train_dataset, test_dataset, train_dl, test_dl
 
@@ -122,8 +119,7 @@ def make_ca_dataset_and_dls(n_neurons: int = 50,
                             num_workers: int = 0,
                             batch_size: int = 1,
                             seed: int = None,
-                            mode: str = 'prediction',
-                            frames: Optional[torch.Tensor] = None):
+                            mode: str = 'prediction'):
     """
     Loads train/test datasets and creates dataloaders for calcium data.
 
@@ -154,11 +150,11 @@ def make_ca_dataset_and_dls(n_neurons: int = 50,
         DataLoader for testing data.
     """
 
-    train_dataset = AllenMoviesCaDataset(n_neurons, seed, train=True, mode=mode, frames=frames)
+    train_dataset = AllenMoviesCaDataset(n_neurons, seed, train=True, mode=mode)
     train_dl = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size,
                                            shuffle=True, num_workers=num_workers)
 
-    test_dataset = AllenMoviesCaDataset(n_neurons, seed, train=False, mode=mode, frames=frames)
+    test_dataset = AllenMoviesCaDataset(n_neurons, seed, train=False, mode=mode)
     test_dl = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size,
                                           shuffle=False, num_workers=num_workers)
 
@@ -176,8 +172,7 @@ def make_pseudomouse_allen_movies_dataset_and_dls(data_dir: os.path = '/',
                                                   batch_size: int = 1,
                                                   correct_units_ids: np.ndarray = None,
                                                   data_type: str = 'npx',
-                                                  seed: int = None,
-                                                  frames: Optional[torch.Tensor] = None):
+                                                  seed: int = None):
     """
     Loads train/test datasets and creates dataloaders from the Allen movie dataset.
 
@@ -219,8 +214,6 @@ def make_pseudomouse_allen_movies_dataset_and_dls(data_dir: os.path = '/',
 
     if data_type == 'npx':
         return make_npx_dataset_and_dls(data_dir, n_neurons, neuron_types, mode, min_snr, dt,
-                                        block, num_workers, batch_size, correct_units_ids, seed,
-                                        frames=frames)
+                                        block, num_workers, batch_size, correct_units_ids, seed)
     elif data_type == 'ca':
-        return make_ca_dataset_and_dls(n_neurons, num_workers, batch_size, seed=seed,
-                                       mode=mode, frames=frames)
+        return make_ca_dataset_and_dls(n_neurons, num_workers, batch_size, seed=seed, mode=mode)

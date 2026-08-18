@@ -158,6 +158,6 @@ class MonkeyReachingDataset(BaseDataset):
 
     def get_target(self, index: int):
         if self.mode == 'unsupervised':
-            return torch.Tensor(index).unsqueeze(0)
+            return torch.tensor(index).unsqueeze(0)
         else:
             return self.target_data[index]

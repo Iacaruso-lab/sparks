@@ -106,9 +106,9 @@ def test_on_batch(model: Union[SPARKS, HebbianTransformer],
     if has_targets:
         if tau_f > 1:
             targets = targets.unfold(dimension=1, size=tau_f, step=1).permute(0, 1, 3, 2).reshape(decoder_outputs_batch.shape[0], decoder_outputs_batch.shape[1] - tau_f + 1, -1)
-            test_loss += loss_fn(act(decoder_outputs_batch[:, :-(tau_f-1)]), targets)
+            test_loss += loss_fn(decoder_outputs_batch[:, :-(tau_f-1)], targets.cpu())
         else:
-            test_loss += loss_fn(act(decoder_outputs_batch), targets)
+            test_loss += loss_fn(decoder_outputs_batch, targets.cpu())
     else:
         test_loss = None
 
@@ -159,11 +159,7 @@ def test(model: Union[SPARKS, HebbianTransformer],
     encoder_outputs_list = []
 
     for i, test_dl in enumerate(test_dls):
-        if isinstance(model, SPARKS):
-            encoder_outputs = torch.Tensor()
-        else:
-            encoder_outputs = None
-
+        encoder_outputs = torch.Tensor()
         decoder_outputs = torch.Tensor()
 
         test_iterator = iter(test_dl)

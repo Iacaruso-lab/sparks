@@ -33,8 +33,7 @@ class BaseHebbianAttentionLayer(nn.Module):
         super().__init__()
         self.n_neurons = n_neurons
         self.embed_dim = embed_dim
-        # frozen constants, not learned -- buffers (not Parameters) so they don't show up in
-        # model.parameters()/optimizer param groups for no reason
+
         self.register_buffer('tau_s', torch.tensor(tau_s, dtype=torch.float32))
         self.register_buffer('dt', torch.tensor(dt, dtype=torch.float32))
         self.register_buffer('w_plus', torch.tensor(w_plus, dtype=torch.float32))

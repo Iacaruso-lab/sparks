@@ -270,7 +270,7 @@ def kl_loss(preds, targets, loss_fn, mu, logvar, beta=1.0):
 
 
 class TemporalCrossEntropyLoss(nn.Module):
-    def __init__(self, ignore_index=-100, label_smoothing=0.0):
+    def __init__(self, ignore_index=-100, label_smoothing=0.0, weight=None):
         """
         Args:
             ignore_index: Target value ignored in the loss (and in gradient computation).
@@ -284,7 +284,7 @@ class TemporalCrossEntropyLoss(nn.Module):
         """
         super(TemporalCrossEntropyLoss, self).__init__()
         self.ignore_index = ignore_index
-        self.loss_fn = nn.CrossEntropyLoss(ignore_index=ignore_index, label_smoothing=label_smoothing)
+        self.loss_fn = nn.CrossEntropyLoss(ignore_index=ignore_index, label_smoothing=label_smoothing, weight=weight)
 
     def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         """
@@ -299,6 +299,6 @@ class TemporalCrossEntropyLoss(nn.Module):
         
         batch_size, seq_length, num_classes = inputs.shape
         inputs_flat = inputs.reshape(-1, num_classes)  # (batch_size * seq_length, num_classes)
-        targets_flat = targets.reshape(-1)  # (batch_size * seq_length)
+        targets_flat = targets.reshape(-1).long()  # (batch_size * seq_length)
         loss = self.loss_fn(inputs_flat, targets_flat)
         return loss

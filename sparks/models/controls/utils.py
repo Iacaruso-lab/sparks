@@ -1,5 +1,5 @@
 import math
-from typing import Optional, Tuple
+from typing import List, Optional, Sequence, Tuple, Union
 
 import torch
 from torch import nn
@@ -19,6 +19,46 @@ class ControlBlockBase(nn.Module):
     """
     def reset_state(self):
         pass
+
+
+def tau_s_per_head(tau_s: Union[float, Sequence[float]]) -> List[float]:
+    """
+    Normalises `tau_s` into one value per head, matching HebbianAttentionBlock: a single float
+    gives one head (unchanged behaviour), a list or tuple gives one head per timescale.
+    """
+    return list(tau_s) if isinstance(tau_s, (list, tuple)) else [tau_s]
+
+
+def multi_timescale_ema(spikes: torch.Tensor, taus: Sequence[float], dt: float,
+                        state: Optional[List[torch.Tensor]] = None
+                        ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+    """
+    Exponential moving averages of the firing rate at several timescales at once, concatenated
+    along the feature axis, so that a downstream sequence model sees both fast and slow structure
+    rather than being committed to a single tau_s (the same motivation as the multi-headed Hebbian
+    attention layer, but the natural form here is concatenated inputs rather than separate heads:
+    each timescale contributes a vector per timestep, not a matrix).
+
+    Args:
+        spikes: [B, T, N]
+        taus: One smoothing timescale per head; a single-element sequence reproduces
+            `ema_firing_rate` exactly.
+        dt: The simulation timestep.
+        state: Optional list of per-head [B, N] EMA values from the end of a previous chunk.
+
+    Returns:
+        ema: [B, T, len(taus) * N], the per-timescale EMAs concatenated over the feature axis.
+        new_state: List of per-head [B, N] tensors, to pass as `state` for the next chunk.
+    """
+    states = state if state is not None else [None] * len(taus)
+
+    emas, new_states = [], []
+    for tau, head_state in zip(taus, states):
+        ema, new_state = ema_firing_rate(spikes, tau, dt, state=head_state)
+        emas.append(ema)
+        new_states.append(new_state)
+
+    return torch.cat(emas, dim=-1), new_states
 
 
 def ema_firing_rate(spikes: torch.Tensor, tau_s: float, dt: float,

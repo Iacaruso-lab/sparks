@@ -54,7 +54,7 @@ def sample_correct_unit_ids(all_units_ids, n_neurons, seed, correct_units_ids=No
     if correct_units_ids is None:
         correct_units_ids = np.random.choice(all_units_ids, n_neurons, replace=False)
     else:
-        correct_units_ids = np.intersect1d(all_units_ids, correct_units_ids)
+        correct_units_ids = correct_units_ids[np.isin(correct_units_ids, all_units_ids)]
 
     return correct_units_ids
 
@@ -204,23 +204,19 @@ def get_frame_indices_per_timestep(dt):
     ])
 
 
-def get_frames(manifest_dir, mode, dt=0.01, ds=1):
+def get_frames(manifest_dir, dt=0.01, ds=1):
     """
     Get frames for Allen Brain Observatory Visual coding natural movies data movie 1, resampled
     from their native 30fps to the same dt-timestep resolution as the neural recording (each
     native frame repeated for every dt-bin it's showing during) so it can be cropped/indexed
     alongside the spikes with the same timestep indices.
     """
+    manifest_path = os.path.join(manifest_dir, "manifest.json")
+    cache = EcephysProjectCache.from_warehouse(manifest=manifest_path)
 
-    if mode != 'reconstruction':
-        return None
-    else:
-        manifest_path = os.path.join(manifest_dir, "manifest.json")
-        cache = EcephysProjectCache.from_warehouse(manifest=manifest_path)
+    images = torch.tensor(cache.get_natural_movie_template(1)).float()
+    reduced_images = torch.nn.functional.max_pool2d(images, (ds, ds))
+    frames = normalize(reduced_images.flatten(1))
 
-        images = torch.tensor(cache.get_natural_movie_template(1)).float()
-        reduced_images = torch.nn.functional.max_pool2d(images, (ds, ds))
-        frames = normalize(reduced_images.flatten(1))
-
-        frame_indices_per_timestep = get_frame_indices_per_timestep(dt)
-        return frames[frame_indices_per_timestep]
+    frame_indices_per_timestep = get_frame_indices_per_timestep(dt)
+    return frames[frame_indices_per_timestep]
