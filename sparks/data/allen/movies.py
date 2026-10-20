@@ -3,6 +3,7 @@ from typing import Optional
 import numpy as np
 import torch
 
+from sparks._optional import import_optional
 from sparks.data.allen.utils import make_spike_histogram, get_frame_indices_per_timestep
 from sparks.data.base import BaseDataset
 
@@ -116,7 +117,7 @@ class AllenMoviesCaDataset(AllenMoviesDataset):
         """
 
         super(AllenMoviesCaDataset, self).__init__(mode=mode)
-        from cebra import datasets
+        datasets = import_optional('cebra.datasets', 'cebra')
 
         if train:
             data = datasets.init(f'allen-movie-one-ca-VISp-{n_neurons}-train-10-{seed}')

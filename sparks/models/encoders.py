@@ -22,8 +22,6 @@ class HebbianEncoder(nn.Module):
         hebbian_config (HebbianConfig): Configuration for the Hebbian attention block.
         attention_config (AttentionConfig): Configuration for conventional attention layers.
         projection_config (ProjectionConfig): Configuration for the final output projection head.
-        share_projection_head (bool): If True, all sessions share a single projection head.
-                                    Requires all sessions to have the same number of neurons.
         device (torch.device): The device for computations.
 
     Returns:
@@ -47,33 +45,35 @@ class HebbianEncoder(nn.Module):
                  hebbian_config: Union[HebbianAttentionConfig, List[HebbianAttentionConfig]] = HebbianAttentionConfig(),
                  conv_config: ConvConfig = ConvConfig(),
                  projection_config: ProjectionConfig = ProjectionConfig(),
-                 share_projection_head: bool = False,
                  device: torch.device = torch.device('cpu')):
         super().__init__()
 
-        if isinstance(hebbian_config, HebbianAttentionConfig):
-            hebbian_config = [hebbian_config] * len(n_neurons_per_session)
+        # The Hebbian attention block is now a single instance shared across every session (see
+        # add_neural_block), so only one HebbianAttentionConfig applies at construction time --
+        # a list is accepted for call-signature compatibility, but only its first element is used.
+        if isinstance(hebbian_config, list):
+            hebbian_config = hebbian_config[0]
 
         self.session_ids = [str(session_id) for session_id in id_per_session] # Ensure string keys for ModuleDict
         self.n_neurons_map = {session_id: n for session_id, n in zip(self.session_ids, n_neurons_per_session)}
-        
+
         self.embed_dim = embed_dim
         self.latent_dim = latent_dim
         self.bottleneck_dim = bottleneck_dim
-        self.share_projection_head = share_projection_head
         self.projection_config = projection_config
         self.device = device
 
-        # Hebbian Attention Blocks (Session-specific)
-        self.hebbian_blocks = nn.ModuleDict({
-            session_id: hebbian_config[i].block_class(
-                n_neurons=self.n_neurons_map[session_id],
-                embed_dim=embed_dim,
-                bottleneck_dim=bottleneck_dim,
-                **hebbian_config[i].params
-            ) for i, session_id in enumerate(self.session_ids)
-        })
-    
+        # Hebbian Attention Block (shared across sessions): each session contributes its own
+        # Hebbian attention layer(s), sized to that session's own n_neurons, while the
+        # head-mixing projection, FeedForward network, and Perceiver's cross/self-attention are
+        # shared across sessions. See HebbianAttentionBlock.add_hebbian_layer.
+        self.hebbian_block = hebbian_config.block_class(
+            n_neurons_per_session=self.n_neurons_map,
+            embed_dim=embed_dim,
+            bottleneck_dim=bottleneck_dim,
+            **hebbian_config.params
+        )
+
         # Conventional Blocks (Shared)
         self.conventional_blocks = nn.Sequential(*[
             conv_config.block_class(d_model=embed_dim * bottleneck_dim, **conv_config.params)
@@ -94,51 +94,56 @@ class HebbianEncoder(nn.Module):
 
     def _create_projection_head(self) -> nn.Module:
         """Factory method to build the projection head."""
-        # use a pre-built module if provided
-        if self.projection_config.custom_head:
-            return self.projection_config.custom_head
-
+        
         mu_layer = nn.Linear(self.bottleneck_dim * self.embed_dim, self.latent_dim)
         logvar_layer = nn.Linear(self.bottleneck_dim * self.embed_dim, self.latent_dim)
 
         # wrap in a small container module
         return nn.ModuleDict({'mu': mu_layer, 'logvar': logvar_layer})
 
+    # Fields from HebbianAttentionConfig.params that shape a session's own Hebbian attention
+    # layer(s) and can therefore still be overridden per session via add_neural_block. n_heads,
+    # dropout, and drop_path are excluded since they're baked into the shared
+    # head_proj/ff/perceiver built once at __init__ time.
+    _PER_SESSION_LAYER_FIELDS = ('tau_s', 'dt', 'w_plus', 'alpha', 'data_type', 'config', 'sliding',
+                                 'window_size', 'block_size', 'min_attn_value', 'max_attn_value',
+                                 'n_timescales')
 
     def add_neural_block(self, n_neurons: int, session_id: Union[str, int],
                          hebbian_config: Optional[HebbianAttentionConfig] = None):
         """
-        Dynamically adds a new Hebbian attention block for a new session.
+        Dynamically adds a new Hebbian attention layer for a new session to the shared Hebbian
+        attention block.
 
-        This is useful for fine-tuning or transfer learning, allowing the model
-        to adapt to new data without retraining from scratch. It creates and registers a new
-        Hebbian block and a corresponding projection head for the given session ID.
+        This is useful for fine-tuning or transfer learning, allowing the model to adapt to new
+        data without retraining from scratch. Only the new session's own Hebbian attention
+        layer(s) and Perceiver neuron identity are created -- the head-mixing projection,
+        FeedForward network, Perceiver cross/self-attention, and projection head are already
+        shared and are left untouched.
 
         Args:
             n_neurons (int): The number of input neurons for the new session.
             session_id (Union[str, int]): A unique identifier for the new session.
-            hebbian_config (HebbianConfig): Configuration parameters for the new Hebbian block.
+            hebbian_config (HebbianConfig): Configuration overrides for the new session's own
+                Hebbian attention layer(s) (e.g. tau_s, data_type). Fields that instead affect
+                the shared head_proj/ff/perceiver (n_heads, dropout, drop_path)
+                are ignored since those are fixed at construction time. Defaults to reusing the
+                values this encoder's Hebbian attention block was itself built with.
 
         """
 
         sid = str(session_id)
         if sid in self.session_ids:
             raise ValueError(f"Session ID '{sid}' already exists. Please choose a unique ID.")
-        
-        if hebbian_config is None:
-            hebbian_config = HebbianAttentionConfig()
 
-        # Create and Register the New Hebbian Block ---
-        # The configuration is inherited from the parent model's setup.
-        new_hebbian_block = hebbian_config.block_class(
-            n_neurons=n_neurons,
-            embed_dim=self.embed_dim,
-            bottleneck_dim=self.bottleneck_dim,
-            **hebbian_config.params
-        ).to(self.device)
+        layer_kwargs = {}
+        if hebbian_config is not None:
+            layer_kwargs = {k: v for k, v in hebbian_config.params.items()
+                            if k in self._PER_SESSION_LAYER_FIELDS}
 
-        self.hebbian_blocks[sid] = new_hebbian_block
-        
+        self.hebbian_block.add_hebbian_layer(n_neurons=n_neurons, session_id=sid, **layer_kwargs)
+        self.hebbian_block.to(self.device)
+
         self.session_ids.append(sid)
         self.n_neurons_map[sid] = n_neurons
 
@@ -161,11 +166,11 @@ class HebbianEncoder(nn.Module):
         """
 
         session_id = str(session_id)
-        if session_id not in self.hebbian_blocks:
+        if session_id not in self.session_ids:
             raise ValueError(f"Session ID '{session_id}' not found.")
 
         # Hebbian Attention
-        h = self.hebbian_blocks[session_id](x, carry_state=carry_state)
+        h = self.hebbian_block(x, session_id, carry_state=carry_state)
 
         # Conventional Attention
         _, T, _ = h.shape
@@ -186,14 +191,13 @@ class HebbianEncoder(nn.Module):
         chunk of a new, unrelated sequence.
 
         Args:
-            session_id: If given, resets only that session's Hebbian block. If None (default),
-                resets every session's block.
+            session_id: If given, resets only that session's Hebbian attention layer(s). If None
+                (default), resets every session.
         """
         if session_id is None:
-            for block in self.hebbian_blocks.values():
-                block.reset_state()
+            self.hebbian_block.reset_state()
         else:
-            self.hebbian_blocks[str(session_id)].reset_state()
+            self.hebbian_block.reset_state(str(session_id))
 
     def reparametrize(self, mu: torch.Tensor, logvar: torch.Tensor,
                       sample: Optional[bool] = None) -> torch.Tensor:
@@ -230,7 +234,8 @@ class HebbianEncoder(nn.Module):
 
         return eps * std + mu
 
-    def hebbian_forward(self, x: torch.Tensor, session_id: Union[str, int]) -> torch.Tensor:
+    def hebbian_forward(self, x: torch.Tensor, session_id: Union[str, int],
+                        carry_state: bool = False) -> torch.Tensor:
         """
         Forward pass through only the Hebbian attention block for a given session.
 
@@ -240,16 +245,19 @@ class HebbianEncoder(nn.Module):
         Args:
             x (torch.Tensor): Input tensor. Shape: (batch, n_neurons) or (batch, seq_len, n_neurons).
             session_id (Union[str, int]): The identifier for the session being processed.
+            carry_state (bool): If True, the Hebbian attention layer(s) carry their STDP/trace
+                state forward from the previous carrying call instead of starting from zero, for
+                walking a long recording through in consecutive chunks. Default is False.
 
         Returns:
             torch.Tensor: The stdp coefficients tensor from the Hebbian attention block.
         """
 
         session_id = str(session_id)
-        if session_id not in self.hebbian_blocks:
+        if session_id not in self.session_ids:
             raise ValueError(f"Session ID '{session_id}' not found.")
 
-        return self.hebbian_blocks[session_id].hebbian_forward(x)
+        return self.hebbian_block.hebbian_forward(x, session_id, carry_state=carry_state)
 
 
 class TransformerEncoder(torch.nn.Module):

@@ -2,8 +2,9 @@ import numpy as np
 import os
 import torch
 
-from sparks.data.allen.utils import make_spikes_and_targets_split_gratings, load_spikes_gratings
-from sparks.data.allen.gratings import AllenGratingsDataset
+from sparks.data.allen.utils import make_gratings_spikes_and_targets_split, load_spikes_gratings
+from sparks.data.allen.gratings import AllenGratingsDataset, GRATINGS_TRIAL_LEN
+
 
 
 def make_gratings_dataset(data_dir: os.path,
@@ -59,17 +60,20 @@ def make_gratings_dataset(data_dir: os.path,
 
     raw_spikes, correct_units_ids, all_units_ids = load_spikes_gratings(data_dir, neuron_types, 
                                                                         n_neurons, seed, correct_units_ids)
-    spikes_train, spikes_test, targets_train, targets_test = make_spikes_and_targets_split_gratings(raw_spikes, 
-                                                                                                     correct_units_ids,
-                                                                                                     all_units_ids,
-                                                                                                     target_type, 
-                                                                                                     p_train)
+    (spikes_train, spikes_test,
+     targets_train, targets_test,
+     correct_units_ids) = make_gratings_spikes_and_targets_split(raw_spikes,
+                                                                 correct_units_ids,
+                                                                 target_type=target_type,
+                                                                 p_train=p_train)
 
-    dataset_train = AllenGratingsDataset(spikes_train, targets_train, correct_units_ids, dt)
+    dataset_train = AllenGratingsDataset(spikes_train, targets_train, correct_units_ids, dt,
+                                         GRATINGS_TRIAL_LEN)
     train_dl = torch.utils.data.DataLoader(dataset_train, batch_size=batch_size, shuffle=True,
                                            num_workers=num_workers)
 
-    dataset_test = AllenGratingsDataset(spikes_test, targets_test, correct_units_ids, dt)
+    dataset_test = AllenGratingsDataset(spikes_test, targets_test, correct_units_ids, dt,
+                                        GRATINGS_TRIAL_LEN)
     test_dl = torch.utils.data.DataLoader(dataset_test, batch_size=batch_size, shuffle=False,
                                           num_workers=num_workers)
 

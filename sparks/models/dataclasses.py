@@ -13,7 +13,6 @@ class HebbianAttentionConfig:
     n_heads: int = 1 # Number of attention heads for perceiver multi-head attention
     dropout: float = 0.
     drop_path: float = 0. # Stochastic depth rate for the block's residual connections
-    use_linear_attn: bool = True # If True, the Perceiver reads via a recurrent linear-attention state instead of softmax cross-attention
     dt: float = 0.001      # Default value for the time-step in ms
     w_plus: float = 0.001
     alpha: float = 1.1
@@ -41,7 +40,6 @@ class HebbianAttentionConfig:
             'alpha': self.alpha,
             'dropout': self.dropout,
             'drop_path': self.drop_path,
-            'use_linear_attn': self.use_linear_attn,
             'data_type': self.data_type,
             'sliding': self.sliding,
             'window_size': self.window_size,

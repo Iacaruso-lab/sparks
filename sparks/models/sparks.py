@@ -28,7 +28,6 @@ class SPARKS(torch.nn.Module):
                  hebbian_config: Union[HebbianAttentionConfig, List[HebbianAttentionConfig]] = HebbianAttentionConfig(),
                  conv_config: ConvConfig = ConvConfig(),
                  projection_config: ProjectionConfig = ProjectionConfig(),
-                 share_projection_head: bool = False,
                  decoder: Optional[torch.nn.Module] = None,
                  output_dim_per_session: Optional[Union[int, List[int]]] = None,
                  joint_decoder: bool = False,
@@ -60,7 +59,6 @@ class SPARKS(torch.nn.Module):
                                       hebbian_config=hebbian_config,
                                       conv_config=conv_config,
                                       projection_config=projection_config,
-                                      share_projection_head=share_projection_head,
                                       device=device)
         
         if decoder is None:
@@ -206,7 +204,8 @@ class SPARKS(torch.nn.Module):
         
         return z_flat
     
-    def hebbian_forward(self, x: torch.Tensor, session_id: Union[str, int]) -> torch.Tensor:
+    def hebbian_forward(self, x: torch.Tensor, session_id: Union[str, int],
+                        carry_state: bool = False) -> torch.Tensor:
         """
         Forward pass through only the Hebbian attention block for a given session.
 
@@ -216,10 +215,17 @@ class SPARKS(torch.nn.Module):
         Args:
             x (torch.Tensor): Input tensor. Shape: (batch, n_neurons) or (batch, seq_len, n_neurons).
             session_id (Union[str, int]): The identifier for the session being processed.
+            carry_state (bool): If True, the Hebbian attention layer(s) pick up the STDP/trace
+                state left by the previous carrying call instead of starting from zero, so that a
+                recording too long to hold a [B, T, N, N] coefficient tensor for can be extracted
+                in consecutive chunks with continuous dynamics (see
+                `sparks.utils.test.get_hebbian_coeffs_on_batch`). Call `reset_state(session_id)`
+                before the first chunk. Default is False.
         Returns:
             torch.Tensor: The stdp coefficients tensor from the Hebbian attention block.
         """
-        return self.encoder.hebbian_forward(x, session_id)
+        return self.encoder.hebbian_forward(x.float().to(self.device), session_id,
+                                            carry_state=carry_state)
 
     def add_session(self, n_neurons: int, session_id: Union[str, int],
                     hebbian_config: Optional[HebbianAttentionConfig] = None,

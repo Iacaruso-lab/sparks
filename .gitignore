@@ -1,20 +1,33 @@
-results/
-*.out
-*.sh
-*.pyc
-*.h5
-*.pt
-*.mat
-*.hdf5
-exportToHTML/
-*.html
-.idea/
-*.pth
-.DS_Store
-.ipynb_checkpoints/
+# Python and packaging
 __pycache__/
+*.pyc
 *.egg-info
-.pypirc
+build/
 dist/
-.vscode/
+.pypirc
+
+# Tooling caches
 .pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Editors and OS
+.idea/
+.vscode/
+exportToHTML/
+.DS_Store
+
+# Jupyter: checkpoints and HTML exports of the example notebooks
+.ipynb_checkpoints/
+sparks/examples/*.html
+examples/*.html
+
+# Data, checkpoints and run outputs
+*.h5
+*.hdf5
+*.mat
+*.pt
+*.pth
+*.out
+results/

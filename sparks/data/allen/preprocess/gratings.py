@@ -15,6 +15,8 @@ def get_trials_idxs_by_condition(stim_cond, stim_types=['static_gratings']):
             stim_id = stim_cond['stimulus_condition_id'].values.astype(int)
         unique_conditions.append(np.unique(stim_id))
 
+    unique_conditions = np.unique(np.concatenate(unique_conditions))
+
     for cond in unique_conditions:
         idxs_per_condition[cond] = np.where(stim_id == cond)[0]
 
@@ -56,7 +58,7 @@ def preprocess_gratings_session(cache, session_id, stim_types=['static_gratings'
     spikes_session = get_gratings_spikes_for_session(session, neuron_types, start_stop_times, min_snr)
     trials_idxs_per_condition = get_trials_idxs_by_condition(correct_stims, stim_types)
 
-    return trials_idxs_per_condition, spikes_session
+    return trials_idxs_per_condition, spikes_session, start_stop_times
 
 
 def preprocess_gratings(cache,
@@ -67,13 +69,14 @@ def preprocess_gratings(cache,
                         expected_num_trials=164):
     spikes_per_cond = {}
     units_ids = []
+    start_stop_times = {}
 
     for session_id in tqdm.tqdm(session_ids):
-        trials_idxs_per_condition, spikes_session = preprocess_gratings_session(cache=cache,
-                                                                                session_id=session_id,
-                                                                                stim_types=stim_types,
-                                                                                neuron_types=neuron_types,
-                                                                                min_snr=min_snr)
+        trials_idxs_per_condition, spikes_session, start_stop_times_session = preprocess_gratings_session(cache=cache,
+                                                                                                          session_id=session_id,
+                                                                                                          stim_types=stim_types,
+                                                                                                          neuron_types=neuron_types,
+                                                                                                          min_snr=min_snr)
         if len(trials_idxs_per_condition.keys()) >= expected_num_trials:
             for cond in trials_idxs_per_condition.keys():
                 if cond in spikes_per_cond.keys():
@@ -86,5 +89,6 @@ def preprocess_gratings(cache,
                                              for unit_id in spikes_session.keys()}
 
             units_ids.append(list(spikes_session.keys()))
+            start_stop_times[session_id] = start_stop_times_session
 
-    return spikes_per_cond, units_ids
+    return spikes_per_cond, units_ids, start_stop_times

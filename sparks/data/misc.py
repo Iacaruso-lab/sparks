@@ -19,11 +19,11 @@ def smooth(x, window=10):
     return np.convolve(x, np.ones(window) / window, mode='same')
 
 
-"""
-=======================================================================================================================
-
-Adapted from https://github.com/sinzlab/neuralpredictors/blob/main/neuralpredictors/training/cyclers.py
-"""
+# ======================================================================================================================
+# The cyclers below are adapted from neuralpredictors
+# (https://github.com/sinzlab/neuralpredictors/blob/main/neuralpredictors/training/cyclers.py),
+# Copyright (c) 2019 Sinz Lab, released under the MIT License -- see THIRD_PARTY_NOTICES.md for the
+# full license text.
 
 
 def cycle(iterable):

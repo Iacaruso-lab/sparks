@@ -1,3 +1,14 @@
+# Vendored from nlb_tools 0.0.4 (https://github.com/neurallatents/nlb_tools, nlb_tools/nwb_interface.py),
+# Copyright (c) 2022 Neural Latents, released under the MIT License -- see THIRD_PARTY_NOTICES.md for
+# the full license text. Only the imports differ from upstream. Vendored rather than depended on
+# because nlb_tools' pinned dependencies conflict with this package's.
+
+from sparks._optional import import_optional
+
+# pynwb and pandas are optional (the `nlb` extra): fail with an install hint rather than a bare ImportError
+import_optional('pynwb', 'nlb')
+import_optional('pandas', 'nlb')
+
 from pynwb import NWBHDF5IO, TimeSeries, ProcessingModule
 from pynwb.core import MultiContainerInterface
 from scipy.stats import mode
@@ -14,13 +25,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-
-"""
-Copied from:
-https://github.com/neurallatents/nlb_tools/blob/main/nlb_tools/nwb_interface.py
-
-to avoid having to install nlb_tools that causes too many dependencies issues
-"""
 
 class NWBDataset:
     """A class for loading/preprocessing data from NWB files for

@@ -1,6 +1,8 @@
 import numpy as np
-from typing import List
-from allensdk.brain_observatory.ecephys.ecephys_project_cache import EcephysProjectCache
+from typing import TYPE_CHECKING, List
+
+if TYPE_CHECKING:  # allensdk is optional (the `allen` extra); only needed here for the type hint
+    from allensdk.brain_observatory.ecephys.ecephys_project_cache import EcephysProjectCache
 
 from sparks.data.allen.preprocess.utils import get_correct_units
 
@@ -37,7 +39,7 @@ def get_movies_start_stop_times_for_session(session, stim_type, n_frames=None, d
     return start_stop_times
 
 
-def get_movie_spikes_for_session(cache: EcephysProjectCache,
+def get_movie_spikes_for_session(cache: 'EcephysProjectCache',
                                  session_id: int = 0,
                                  stim_type: str = 'natural_movie_one',
                                  neuron_types: List = ['VISp'], 
@@ -60,7 +62,7 @@ def get_movie_spikes_for_session(cache: EcephysProjectCache,
     start_stop_times = get_movies_start_stop_times_for_session(session, stim_type)
 
     if start_stop_times is None:
-        return None
+        return None, None
 
     correct_units_ids = get_correct_units(session, neuron_types, min_snr)
     spikes_session = {

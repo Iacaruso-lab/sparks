@@ -99,10 +99,10 @@ def make_npx_dataset_and_dls(data_dir: os.path,
         DataLoader for testing data.
     """
 
-    all_spikes, correct_units_ids = load_preprocessed_spikes(data_dir, neuron_types,
-                                                             stim_type='natural_movie_one', min_snr=min_snr,
-                                                             n_neurons=n_neurons, seed=seed,
-                                                             correct_units_ids=correct_units_ids)
+    all_spikes, correct_units_ids, _ = load_preprocessed_spikes(data_dir, neuron_types,
+                                                                stim_type='natural_movie_one', min_snr=min_snr,
+                                                                n_neurons=n_neurons, seed=seed,
+                                                                correct_units_ids=correct_units_ids)
 
     train_indices, test_indices = get_train_test_indices(block, mode)
     train_dataset, train_dl = make_npx_dataset_and_dl(all_spikes, train_indices, correct_units_ids,

@@ -126,9 +126,31 @@ class DenseHebbianAttentionLayer(BaseHebbianAttentionLayer):
         self._carried_state = detach_state(new_state)
         return self.v_proj(stdp)  # [B, T, N, D] — real scores
 
+    def stdp_forward(self, spikes, carry_state: bool = False):
+        """
+        Return the raw STDP coefficients ([B, T, N, N]) rather than their projection to
+        [B, T, N, D], for analysis of the Hebbian dynamics themselves.
+
+        Args:
+            spikes: see stdp_coefficients.
+            carry_state: If True, behaves exactly like forward(): starts from the state stored at
+                the end of the previous carrying call and stores this call's (detached) end-state
+                for the next one, so a long recording can be walked through in consecutive chunks
+                with continuous dynamics. If False (default), the call is stateless in *both*
+                directions -- it starts from zero and also leaves any state stored by a previous
+                forward() untouched, so pulling coefficients out for analysis cannot disturb an
+                in-progress chunked forward pass. Call reset_state() before the first chunk of a
+                new, unrelated sequence.
+        """
+        if not carry_state:
+            return self.stdp_coefficients(spikes)[0]
+
+        stdp, new_state = self.stdp_coefficients(spikes, state=self._carried_state)
+        self._carried_state = detach_state(new_state)
+        return stdp
+
     def reset_state(self):
         self._carried_state = None
-
     def get_pre_post_spikes(self, spikes: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Get the pre and post synaptic spikes from the input spikes tensor.

@@ -1,9 +1,4 @@
-try:
-    from mamba_ssm import Mamba
-except ImportError:
-    Mamba = None
-
-from typing import List, Union
+from typing import Dict, List, Optional, Union
 
 import numpy as np
 from torch import nn
@@ -26,7 +21,7 @@ CONFIG_DICT = {'ephys': {'full': FullEphysAttentionLayer,
 
 class HebbianAttentionBlock(nn.Module):
     def __init__(self,
-                 n_neurons: int,
+                 n_neurons_per_session: Dict[str, int],
                  embed_dim: int,
                  bottleneck_dim: int,
                  dropout: float = 0.,
@@ -43,16 +38,19 @@ class HebbianAttentionBlock(nn.Module):
                  n_heads: int = 1,
                  min_attn_value: float = -10.,
                  max_attn_value: float = 10.,
-                 n_timescales: int = 5,
-                 use_linear_attn: bool = True) -> None:
+                 n_timescales: int = 5) -> None:
         """
         Initialize a Hebbian Transformer Block.
 
-        This block includes a multi-headed Hebbian attention layer with pre- and post-synaptic weights and a
-        linear output layer to mix the outputs of the different attention heads. It also includes a FeedForward network.
+        This is a *shared* block across every session: each session gets its own Hebbian
+        attention layer(s) (and, inside the Perceiver, its own per-neuron identity), sized to
+        that session's own n_neurons, but the head-mixing projection, FeedForward network, and
+        Perceiver's cross/self-attention are shared across all sessions. Adding a new session
+        (see add_hebbian_layer) extends this block in place instead of building a whole new one.
 
         Args:
-            n_total_neurons (int): The total number of neurons.
+            n_neurons_per_session (Dict[str, int]): Number of input neurons for each session,
+                                                keyed by session ID.
             embed_dim (int): The number of dimensions for embedded output.
             n_heads (int, optional): The number of heads in the Perceiver's cross-attention. Defaults to 1.
             tau_s (float or List[float], optional): The time constant(s) for STDP. A single float gives one
@@ -72,7 +70,7 @@ class HebbianAttentionBlock(nn.Module):
                                                 consumed by calcium; ephys's clamp is hardcoded regardless).
             max_attn_value (float, optional): The maximum value for attention coefficients. Defaults to 10.
             config (HebbianAttentionConfig): Configuration for the Hebbian attention block (full weights, light or sparse).
-            
+
         Returns:
             None
         """
@@ -86,85 +84,185 @@ class HebbianAttentionBlock(nn.Module):
 
         tau_s_per_head = tau_s if isinstance(tau_s, (list, tuple)) else [tau_s]
         self.n_hebbian_heads = len(tau_s_per_head)
+        self.embed_dim = embed_dim
 
-        # Multiple Hebbian attention heads, each with its own tau_s (and therefore its own STDP
-        # eligibility-trace timescale and value pathway), so the model can capture correlations at
-        # several timescales at once instead of being committed to a single tau_s. Single-head
-        # (tau_s as a plain float) is unchanged from before -- no extra params, no combine step.
-        self.attention_layers = nn.ModuleList([
-            AttentionStrategy(n_neurons=n_neurons,
-                              embed_dim=embed_dim,
-                              tau_s=t,
-                              dt=dt,
-                              w_plus=w_plus,
-                              alpha=alpha,
-                              min_attn_value=min_attn_value,
-                              max_attn_value=max_attn_value,
-                              sliding=sliding,
-                              window_size=window_size,
-                              block_size=block_size,
-                              n_timescales=n_timescales)
-            for t in tau_s_per_head
-        ])
+        # Session-specific Hebbian attention layer(s): one ModuleList of heads per session,
+        # each sized to that session's own n_neurons (multiple heads, each with its own tau_s,
+        # capture correlations at several eligibility-trace timescales simultaneously; a plain
+        # float tau_s gives the original single-head behavior, no extra params, no combine
+        # step). New sessions are added in place via add_hebbian_layer instead of building a
+        # whole new HebbianAttentionBlock, so the head_proj/ff/perceiver below stay shared.
+        self.attention_layers = nn.ModuleDict({
+            str(session_id): nn.ModuleList([
+                AttentionStrategy(n_neurons=n,
+                                  embed_dim=embed_dim,
+                                  tau_s=t,
+                                  dt=dt,
+                                  w_plus=w_plus,
+                                  alpha=alpha,
+                                  min_attn_value=min_attn_value,
+                                  max_attn_value=max_attn_value,
+                                  sliding=sliding,
+                                  window_size=window_size,
+                                  block_size=block_size,
+                                  n_timescales=n_timescales)
+                for t in tau_s_per_head
+            ])
+            for session_id, n in n_neurons_per_session.items()
+        })
         if self.n_hebbian_heads > 1:
             self.head_proj = nn.Linear(self.n_hebbian_heads * embed_dim, embed_dim)
 
+        # Defaults reused by add_hebbian_layer for any field a new session doesn't override.
+        self._default_layer_config = dict(tau_s=tau_s, dt=dt, w_plus=w_plus, alpha=alpha,
+                                          data_type=data_type, config=config, sliding=sliding,
+                                          window_size=window_size, block_size=block_size,
+                                          min_attn_value=min_attn_value, max_attn_value=max_attn_value,
+                                          n_timescales=n_timescales)
+
         self.ff = FeedForward(embed_dim, embed_dim, dropout=dropout)
-        self.embed_dim = embed_dim
         self.drop_path = DropPath(drop_path)
 
-        # Perceiver
-        self.perceiver = PerceiverBlock(n_neurons=n_neurons,
+        # Perceiver (shared cross/self-attention, ffn; per-session neuron identity only)
+        self.perceiver = PerceiverBlock(n_neurons_per_session=n_neurons_per_session,
                                          embed_dim=embed_dim,
                                          bottleneck_dim=bottleneck_dim,
                                          n_heads=n_heads,
                                          dropout=dropout,
-                                         drop_path=drop_path,
-                                         use_linear_attn=use_linear_attn)
+                                         drop_path=drop_path)
 
+    def add_hebbian_layer(self, n_neurons: int, session_id: Union[str, int],
+                          tau_s: Optional[Union[float, List[float]]] = None,
+                          dt: Optional[float] = None,
+                          w_plus: Optional[float] = None,
+                          alpha: Optional[float] = None,
+                          data_type: Optional[str] = None,
+                          config: Optional[str] = None,
+                          sliding: Optional[bool] = None,
+                          window_size: Optional[int] = None,
+                          block_size: Optional[int] = None,
+                          min_attn_value: Optional[float] = None,
+                          max_attn_value: Optional[float] = None,
+                          n_timescales: Optional[int] = None) -> None:
+        """
+        Adds a new session-specific Hebbian attention layer (and a matching per-session
+        Perceiver neuron identity) to this shared block, rather than building a whole new
+        HebbianAttentionBlock. head_proj, ff, and the Perceiver's cross/self-attention are
+        already shared and are left untouched.
 
-    def forward(self, x, carry_state: bool = False):
+        Any argument left as None reuses the value this block was itself constructed with.
+        n_heads, dropout, and drop_path can't be set per session since
+        they're baked into the already-built shared ff/perceiver; tau_s (if given) must
+        resolve to the same number of heads this block was built with, since head_proj's
+        input size is fixed at construction time.
+
+        Args:
+            n_neurons (int): The number of input neurons for the new session.
+            session_id (Union[str, int]): A unique identifier for the new session.
+        """
+        sid = str(session_id)
+        if sid in self.attention_layers:
+            raise ValueError(f"Session ID '{sid}' already exists in this Hebbian attention block.")
+
+        cfg = dict(self._default_layer_config)
+        overrides = dict(tau_s=tau_s, dt=dt, w_plus=w_plus, alpha=alpha, data_type=data_type,
+                         config=config, sliding=sliding, window_size=window_size,
+                         block_size=block_size, min_attn_value=min_attn_value,
+                         max_attn_value=max_attn_value, n_timescales=n_timescales)
+        cfg.update({k: v for k, v in overrides.items() if v is not None})
+
+        try:
+            AttentionStrategy = CONFIG_DICT[cfg['data_type']][cfg['config']]
+        except KeyError:
+            raise ValueError(f"Invalid data_type '{cfg['data_type']}' or config '{cfg['config']}'. "
+                            f"Valid data_types: {list(CONFIG_DICT.keys())}, valid configs: {list(CONFIG_DICT['ephys'].keys())}")
+
+        tau_s_per_head = cfg['tau_s'] if isinstance(cfg['tau_s'], (list, tuple)) else [cfg['tau_s']]
+        if len(tau_s_per_head) != self.n_hebbian_heads:
+            raise ValueError(f"New session must resolve to {self.n_hebbian_heads} tau_s head(s) to match "
+                            f"this block's head_proj/ff, got {len(tau_s_per_head)}.")
+
+        device = next(self.parameters()).device
+        self.attention_layers[sid] = nn.ModuleList([
+            AttentionStrategy(n_neurons=n_neurons,
+                              embed_dim=self.embed_dim,
+                              tau_s=t,
+                              dt=cfg['dt'],
+                              w_plus=cfg['w_plus'],
+                              alpha=cfg['alpha'],
+                              min_attn_value=cfg['min_attn_value'],
+                              max_attn_value=cfg['max_attn_value'],
+                              sliding=cfg['sliding'],
+                              window_size=cfg['window_size'],
+                              block_size=cfg['block_size'],
+                              n_timescales=cfg['n_timescales'])
+            for t in tau_s_per_head
+        ]).to(device)
+
+        self.perceiver.add_session(n_neurons, sid)
+
+    def forward(self, x, session_id: Union[str, int], carry_state: bool = False):
         """
         Forward pass of the encoder
         :param x: spikes of the neurons [B, T, N]
+        :param session_id (Union[str, int]): The identifier for the session being processed.
         :param carry_state: If True, the Hebbian attention layer(s) and the Perceiver's
-            linear-attention readout (if enabled) carry their recurrent state forward from the
+            linear-attention readout carry their recurrent state forward from the
             previous forward() call instead of starting from zero -- see
             DenseHebbianAttentionLayer.forward. Call reset_state() before the first chunk of a
             new, unrelated sequence. Default is False (matches the original per-call-independent
             behavior).
         :return: encoded signal the output neurons [B, T, N, embed_dim]
         """
-
-        head_outs = [layer(x, carry_state=carry_state) for layer in self.attention_layers]  # each [B, T, N, embed_dim]
+        sid = str(session_id)
+        head_outs = [layer(x, carry_state=carry_state) for layer in self.attention_layers[sid]]  # each [B, T, N, embed_dim]
         x = self.head_proj(torch.cat(head_outs, dim=-1)) if self.n_hebbian_heads > 1 else head_outs[0]
 
         ffn_out = self.ff(x)
         x = x + self.drop_path(ffn_out)
 
         # Perceiver
-        x = self.perceiver(x, carry_state=carry_state)
+        x = self.perceiver(x, sid, carry_state=carry_state)
 
         return x  # [B, T, bottleneck_dim * embed_dim]
 
-    def reset_state(self):
-        for layer in self.attention_layers:
-            layer.reset_state()
-        self.perceiver.reset_state()
+    def reset_state(self, session_id: Optional[Union[str, int]] = None):
+        """
+        Args:
+            session_id: If given, resets only that session's Hebbian attention layer(s) and
+                Perceiver state. If None (default), resets every session.
+        """
+        if session_id is None:
+            for layers in self.attention_layers.values():
+                for layer in layers:
+                    layer.reset_state()
+            self.perceiver.reset_state()
+        else:
+            sid = str(session_id)
+            for layer in self.attention_layers[sid]:
+                layer.reset_state()
+            self.perceiver.reset_state(sid)
 
-    def hebbian_forward(self, x):
+    def hebbian_forward(self, x, session_id: Union[str, int], carry_state: bool = False):
         """
         Forward pass through the Hebbian attention layer(s) only, to extract the stdp coefficients
         for analysis.
 
         Args:
             x (torch.Tensor): Input tensor. Shape: (batch, seq_len, n_neurons).
+            session_id (Union[str, int]): The identifier for the session being processed.
+            carry_state (bool): If True, the Hebbian attention layer(s) carry their STDP/trace
+                state forward from the previous carrying call instead of starting from zero, so a
+                long recording can be walked through in consecutive chunks -- see
+                DenseHebbianAttentionLayer.stdp_forward. Default is False, which is both stateless
+                and side-effect free (it does not touch state stored by forward()).
         Returns:
             torch.Tensor: The stdp coefficients tensor from the Hebbian attention layer, if there's
                           a single head (unchanged from before). With multiple heads (tau_s given as
                           a list), a stack of per-head coefficients instead, shape [n_heads, B, T, N, N].
         """
-        coeffs = [layer.stdp_coefficients(x)[0] for layer in self.attention_layers]
+        sid = str(session_id)
+        coeffs = [layer.stdp_forward(x, carry_state=carry_state) for layer in self.attention_layers[sid]]
         return coeffs[0] if self.n_hebbian_heads == 1 else torch.stack(coeffs, dim=0)
 
 
@@ -260,49 +358,38 @@ class AttentionBlock(nn.Module):
 
 
 class PerceiverBlock(nn.Module):
-    def __init__(self, n_neurons, embed_dim, bottleneck_dim, n_heads=1, dropout=0., drop_path=0.,
-                 use_linear_attn=False):
+    def __init__(self, n_neurons_per_session: Dict[str, int], embed_dim, bottleneck_dim, n_heads=1,
+                 dropout=0., drop_path=0.):
         super().__init__()
-        self.n_neurons = n_neurons
         self.embed_dim = embed_dim
         self.bottleneck_dim = bottleneck_dim
         self.n_heads = n_heads
 
         assert embed_dim % n_heads == 0, "embed_dim must be divisible by n_heads"
 
-        # Per-neuron identity
-        self.neuron_identity = nn.Parameter(torch.empty(1, 1, n_neurons, embed_dim))
-        nn.init.trunc_normal_(self.neuron_identity, std=1/np.sqrt(self.embed_dim))
+        # Per-neuron identity, one per session since n_neurons differs across sessions; every
+        # other component below (latents, cross/self-attention, ffn) is shared across sessions.
+        self.neuron_identity = nn.ParameterDict()
+        for session_id, n in n_neurons_per_session.items():
+            self._init_neuron_identity(n, session_id)
 
         # Learnable latent queries initialised as the spatial mean + a bit of noise to break symmetry
         self.latents = nn.Parameter(torch.empty(1, bottleneck_dim, embed_dim))
         nn.init.trunc_normal_(self.latents, std=1/np.sqrt(self.embed_dim))
         self.norm_latents = nn.LayerNorm(embed_dim)
 
-        # use_linear_attn swaps the softmax cross-attention readout (independent per timestep)
-        # for a kernelized linear-attention readout that carries a decaying KV state across time
+        # Kernelized linear-attention readout that carries a decaying KV state across time
         # (Katharopoulos et al., "Transformers are RNNs") -- mirroring the Hebbian STDP layer's own
         # decaying eligibility traces, so the Perceiver's compression is recurrent too instead of
-        # being the one stateless step between two recurrent stages. This is an ablation flag, not
-        # a replacement: the softmax path stays the default since it's the one with measured results.
-        self.use_linear_attn = use_linear_attn
+        # being the one stateless step between two recurrent stages.
         self.lin_head_dim = embed_dim // n_heads
-        if use_linear_attn:
-            self.lin_q_proj = nn.Linear(embed_dim, embed_dim, bias=False)
-            self.lin_k_proj = nn.Linear(embed_dim, embed_dim, bias=False)
-            self.lin_v_proj = nn.Linear(embed_dim, embed_dim, bias=False)
-            # Per-head decay of the recurrent KV state, sigmoid-bounded to (0, 1) and learnable
-            # (analogous to the Hebbian layer's tau_s-derived trace decay). Init at 0 -> sigmoid(0)
-            # = 0.5, a neutral starting point left for training to sharpen in either direction.
-            self.linear_attn_decay = nn.Parameter(torch.zeros(n_heads))
-        else:
-            # Multi-head cross attention to attend to the neurons
-            self.cross_attn = nn.MultiheadAttention(
-                embed_dim=embed_dim,
-                num_heads=n_heads,
-                dropout=dropout,
-                batch_first=True
-            )
+        self.lin_q_proj = nn.Linear(embed_dim, embed_dim, bias=False)
+        self.lin_k_proj = nn.Linear(embed_dim, embed_dim, bias=False)
+        self.lin_v_proj = nn.Linear(embed_dim, embed_dim, bias=False)
+        # Per-head decay of the recurrent KV state, sigmoid-bounded to (0, 1) and learnable
+        # (analogous to the Hebbian layer's tau_s-derived trace decay). Init at 0 -> sigmoid(0)
+        # = 0.5, a neutral starting point left for training to sharpen in either direction.
+        self.linear_attn_decay = nn.Parameter(torch.zeros(n_heads))
         # Latent self-attention: lets the K compressed slots exchange information with each
         # other after reading from the neuron population, instead of each being an independent,
         # non-interacting summary. Cheap since K is small (O(K^2) vs. the O(N*K) cross-attention
@@ -318,18 +405,37 @@ class PerceiverBlock(nn.Module):
         self.ffn = FeedForward(embed_dim, embed_dim, dropout=dropout)
         self.norm1 = nn.LayerNorm(embed_dim)
         self.drop_path = DropPath(drop_path)
-        self._carried_state = None
+        self._carried_state = {}  # session_id (str) -> linear-attention KV state, see forward
 
-    def reset_state(self):
-        self._carried_state = None
+    def _init_neuron_identity(self, n_neurons: int, session_id: Union[str, int], device=None):
+        param = nn.Parameter(torch.empty(1, 1, n_neurons, self.embed_dim, device=device))
+        nn.init.trunc_normal_(param, std=1/np.sqrt(self.embed_dim))
+        self.neuron_identity[str(session_id)] = param
+
+    def add_session(self, n_neurons: int, session_id: Union[str, int]):
+        """Adds a new session's per-neuron identity. Everything else in this block is shared."""
+        sid = str(session_id)
+        if sid in self.neuron_identity:
+            raise ValueError(f"Session ID '{sid}' already exists in this Perceiver block.")
+        self._init_neuron_identity(n_neurons, sid, device=self.latents.device)
+
+    def reset_state(self, session_id: Optional[Union[str, int]] = None):
+        """
+        Args:
+            session_id: If given, clears only that session's carried linear-attention state.
+                If None (default), clears every session's carried state.
+        """
+        if session_id is None:
+            self._carried_state = {}
+        else:
+            self._carried_state.pop(str(session_id), None)
 
     def _linear_attn_readout(self, x, state=None):
         """
         x: [B, T, N, D] neuron features (post neuron_identity + norm1)
-        Returns: [B*T, bottleneck_dim, D], the linear-attention analogue of the softmax
-        cross-attention path -- the K latents read out a decaying key-value memory accumulated
-        over the neuron population across time, via the exact parallel affine scan used
-        elsewhere for the Hebbian STDP traces.
+        Returns: [B*T, bottleneck_dim, D] -- the K latents read out a decaying key-value memory
+        accumulated over the neuron population across time, via the exact parallel affine scan
+        used elsewhere for the Hebbian STDP traces.
         """
         B, T, N, D = x.shape
         H, Dh = self.n_heads, self.lin_head_dim
@@ -360,43 +466,31 @@ class PerceiverBlock(nn.Module):
         new_state = (state_kv[:, -1], state_z[:, -1])
         return out.reshape(B * T, self.bottleneck_dim, D), new_state
 
-    def forward(self, x, carry_state: bool = False):
+    def forward(self, x, session_id: Union[str, int], carry_state: bool = False):
         """
         x: Output from Hebbian Attention layer
         Shape: [B, T, N, D] (Batch, Time, Neurons, Embedding)
-        carry_state: If True (and use_linear_attn), the linear-attention readout's KV state
+        session_id: The identifier for the session being processed -- selects this session's
+            per-neuron identity and its carried KV state.
+        carry_state: If True, the linear-attention readout's KV state
             carries forward from the previous forward() call instead of starting from zero.
             State is detached before being stored (truncated BPTT). Default is False. Call
             reset_state() before the first chunk of a new, unrelated sequence.
         """
+        sid = str(session_id)
         B, T, N, D = x.shape
 
-        x = self.norm1(x + self.neuron_identity)
+        x = self.norm1(x + self.neuron_identity[sid])
 
         # Expand learnable latents to match the flattened batch size
         # Shape: [B*T, bottleneck_dim, D]
         latents_expanded = self.latents.expand(B * T, -1, -1)  # Shape: [B*T, bottleneck_dim, D]
 
-        if self.use_linear_attn:
-            # Recurrent readout: latents (Q) attend to a KV state decayed and accumulated over
-            # time, instead of independently re-reading the neuron population at every timestep.
-            state = self._carried_state if carry_state else None
-            attn_out, new_state = self._linear_attn_readout(x, state=state)  # Shape: [B*T, bottleneck_dim, D]
-            self._carried_state = detach_state(new_state)
-        else:
-            # Flatten B and T to process all time steps independently in parallel
-            # Shape becomes: [B*T, N, D]
-            x_flat = x.view(B * T, N, D)
-            latents_norm = self.norm_latents(latents_expanded)  # Normalize latents before attention
-
-            # Apply Cross Attention: Latents (Q) attend to Neurons (K, V)
-            # Output shape: [B*T, bottleneck_dim, D]
-            attn_out, _ = self.cross_attn(
-                query=latents_norm,
-                key=x_flat,
-                value=x_flat,
-                need_weights=False
-            )
+        # Recurrent readout: latents (Q) attend to a KV state decayed and accumulated over
+        # time, instead of independently re-reading the neuron population at every timestep.
+        state = self._carried_state.get(sid) if carry_state else None
+        attn_out, new_state = self._linear_attn_readout(x, state=state)  # Shape: [B*T, bottleneck_dim, D]
+        self._carried_state[sid] = detach_state(new_state)
 
         latents = latents_expanded + self.drop_path(attn_out)  # Residual connection around cross attention
 
@@ -426,11 +520,15 @@ class MambaBlock(nn.Module):
         """
         super().__init__()
 
-        if Mamba is None:
+        # Imported here rather than at module level: mamba_ssm is optional, slow to import, and
+        # can fail with more than an ImportError on a broken CUDA install.
+        try:
+            from mamba_ssm import Mamba
+        except ImportError as e:
             raise ImportError(
                 "MambaBlock requires the mamba_ssm package. Install it with "
                 "`pip install causal-conv1d mamba-ssm --no-build-isolation`."
-            )
+            ) from e
 
         self.norm = nn.LayerNorm(d_model)
         self.mamba = Mamba(
