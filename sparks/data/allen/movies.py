@@ -1,143 +1,135 @@
-from typing import Optional
+from typing import List, Optional, Sequence
 
 import numpy as np
 import torch
 
-from sparks._optional import import_optional
-from sparks.data.allen.utils import get_frame_indices_per_timestep, make_spike_histogram
-from sparks.data.base import BaseDataset
-
-MODES = ('prediction', 'reconstruction', 'unsupervised', 'denoising')
-
-
-class AllenMoviesDataset(BaseDataset):
-    def __init__(self,
-                 frame_indices: torch.Tensor,
-                 mode: str = 'prediction',
-                 frames: Optional[torch.Tensor] = None) -> None:
-        """
-        Pseudo-mouse abstract dataset class for Allen Brain Observatory Visual coding natural movies data
-
-        Parameters
-        ----------
-        frame_indices : torch.Tensor
-            [T], the index of the movie frame showing at each timestep of a trial.
-        mode : str, optional
-            'prediction': target is the movie frame index at each timestep, [T].
-            'reconstruction': target is `frames`, the movie frame showing at each timestep.
-            'unsupervised': target is the spikes themselves.
-            'denoising': target is another randomly chosen trial's spikes.
-        frames : torch.Tensor, optional
-            [T, ...], the movie frame showing at each timestep of a trial (see
-            `sparks.data.allen.utils.get_frames`), shared by every trial since all presentations
-            show the same movie. Required when mode == 'reconstruction'.
-
-        Each __getitem__ call returns the whole recording -- to process a long recording in
-        consecutive chunks (e.g. for a stateful encoder), slice the returned (spikes, target)
-        tensors yourself; see the `chunk_length` argument of sparks.training.train_on_batch.
-        """
-
-        super().__init__()
-        if mode not in MODES:
-            raise ValueError(f"Unknown mode: {mode!r}. Valid modes: {MODES}.")
-        if mode == 'reconstruction':
-            if frames is None:
-                raise ValueError("mode='reconstruction' needs `frames`, e.g. from sparks.data.allen.utils.get_frames.")
-            if len(frames) != len(frame_indices):
-                raise ValueError(f"`frames` must have one frame per timestep ({len(frame_indices)}), "
-                                 f"got {len(frames)}. Use get_frames with the dataset's dt.")
-
-        self.frame_indices = frame_indices
-        self.mode = mode
-        self.frames = frames
-
-    def __len__(self):
-        raise NotImplementedError
-
-    def get_full_spikes(self, idx):
-        raise NotImplementedError
-
-    def get_spikes(self, idx):
-        return self.get_full_spikes(idx)
-
-    def get_target(self, index):
-        if self.mode == 'unsupervised':
-            return self.get_spikes(index)
-        elif self.mode == 'denoising':
-            other_index = np.random.randint(0, len(self))
-            return self.get_spikes(other_index)
-        elif self.mode == 'prediction':
-            return self.frame_indices
-        else:
-            return self.frames
+from sparks.data.allen.datasets import AllenMoviesCaDataset, AllenMoviesNpxDataset
+from sparks.data.allen.utils import (PathLike, get_train_test_indices, load_preprocessed_spikes,
+                                     load_session_preprocessed_spikes, make_spikes_dict)
+from sparks.data.base import DataSplit, make_split
 
 
-class AllenMoviesNpxDataset(AllenMoviesDataset):
-    def __init__(self,
-                 spikes: dict,
-                 good_units_ids: np.ndarray,
-                 dt: float = 0.01,
-                 mode: str = 'prediction',
-                 frames: Optional[torch.Tensor] = None) -> None:
-        """
-        Pseudo-mouse dataset class for Allen Brain Observatory Visual coding natural movies data
-
-        Parameters
-        --------------------------------------
-        :param spikes: dict of spike times per unit id
-        :param good_units_ids: np.ndarray
-        :param dt: float
-        :param mode: see AllenMoviesDataset
-        :param frames: see AllenMoviesDataset
-        """
-
-        frame_indices = torch.from_numpy(get_frame_indices_per_timestep(dt)).long()
-        super().__init__(frame_indices=frame_indices, mode=mode, frames=frames)
-
-        self.good_units_ids = good_units_ids
-        self.spikes = spikes
-        self.dt = dt
-        self.time_bin_edges = np.concatenate((np.arange(0, 30., dt), np.array([30.])))
-
-    def __len__(self):
-        return len(self.spikes[self.good_units_ids[0]])
-
-    def get_full_spikes(self, idx):
-        """
-        Get all spikes for a given presentation of the movie
-        """
-        return make_spike_histogram(idx, self.good_units_ids, self.spikes, self.time_bin_edges)
+def _npx_split(spikes: dict, units_ids: Sequence, block: str, mode: str, dt: float,
+               frames: Optional[torch.Tensor], batch_size: int, num_workers: int) -> DataSplit:
+    """Splits the 20 presentations of the movie into a train and a test set (see get_train_test_indices)."""
+    train_indices, test_indices = get_train_test_indices(block, mode)
+    return make_split(AllenMoviesNpxDataset(make_spikes_dict(spikes, train_indices, units_ids), units_ids, dt,
+                                            mode=mode, frames=frames),
+                      AllenMoviesNpxDataset(make_spikes_dict(spikes, test_indices, units_ids), units_ids, dt,
+                                            mode=mode, frames=frames),
+                      batch_size=batch_size, num_workers=num_workers)
 
 
-class AllenMoviesCaDataset(AllenMoviesDataset):
-    def __init__(self,
-                 n_neurons: int = 10,
-                 seed: int = 111,
-                 train: bool = True,
-                 mode: str = 'prediction',
-                 frames: Optional[torch.Tensor] = None) -> None:
-        """
-        Pseudo-mouse dataset class for Allen Brain Observatory Visual coding calcium imaging data,
-        recorded at the movie's own 30 fps (one timestep per frame, 900 frames).
+def make_pseudomouse_movies_data(data_path: PathLike,
+                                 areas: Sequence[str] = ('VISp',),
+                                 n_neurons: Optional[int] = 50,
+                                 mode: str = 'prediction',
+                                 block: str = 'first',
+                                 min_snr: float = 1.5,
+                                 dt: float = 0.01,
+                                 units_ids: Optional[np.ndarray] = None,
+                                 seed: Optional[int] = None,
+                                 frames: Optional[torch.Tensor] = None,
+                                 batch_size: int = 1,
+                                 num_workers: int = 0) -> DataSplit:
+    """
+    Neuropixels responses to natural movie one of a pseudo-mouse: units pooled over every session.
 
-        Parameters
-        --------------------------------------
-        :param mode: see AllenMoviesDataset
-        :param frames: see AllenMoviesDataset
-        """
+    Parameters
+    ----------
+    data_path : PathLike
+        The directory of the preprocessed Allen data (see sparks.data.allen).
+    areas : Sequence[str], optional
+        Visual areas to take units from. Default is ('VISp',).
+    n_neurons : int, optional
+        Number of units to draw at random from each area. None keeps them all. Default is 50.
+    mode : str, optional
+        What the targets are: 'prediction', 'reconstruction', 'unsupervised' or 'denoising', see
+        sparks.data.allen.datasets.AllenMoviesDataset. Default is 'prediction'.
+    block : str, optional
+        Which presentations to train and test on, see sparks.data.allen.utils.get_train_test_indices.
+        Default is 'first'.
+    min_snr : float, optional
+        The SNR threshold of the preprocessed files. Default is 1.5.
+    dt : float, optional
+        Time step, in seconds. Default is 0.01.
+    units_ids : np.ndarray, optional
+        Use these units rather than drawing `n_neurons` at random. Default is None.
+    seed : int, optional
+        Seed of the random draw of units. Default is None.
+    frames : torch.Tensor, optional
+        The movie frame at each timestep, required when mode == 'reconstruction'
+        (see sparks.data.allen.utils.get_frames).
+    batch_size, num_workers : int, optional
+        For the dataloaders. Defaults are 1 and 0.
 
-        super().__init__(frame_indices=torch.arange(900), mode=mode, frames=frames)
-        datasets = import_optional('cebra.datasets', 'cebra')
+    Returns
+    -------
+    DataSplit
+    """
+    spikes, units_ids, _ = load_preprocessed_spikes(data_path, areas, stimulus='natural_movie_one', min_snr=min_snr,
+                                                    n_neurons=n_neurons, seed=seed, units_ids=units_ids)
+    return _npx_split(spikes, units_ids, block, mode, dt, frames, batch_size, num_workers)
 
-        if train:
-            data = datasets.init(f'allen-movie-one-ca-VISp-{n_neurons}-train-10-{seed}')
-        else:
-            data = datasets.init(f'allen-movie-one-ca-VISp-{n_neurons}-test-10-{seed}')
 
-        self.spikes = data.neural.view(-1, 900, n_neurons).transpose(2, 1)
+def make_session_movies_data(data_path: PathLike,
+                             session_ids: Sequence[int],
+                             areas: Sequence[str] = ('VISp',),
+                             mode: str = 'prediction',
+                             block: str = 'first',
+                             min_snr: float = 1.5,
+                             dt: float = 0.01,
+                             frames: Optional[torch.Tensor] = None,
+                             batch_size: int = 1,
+                             num_workers: int = 0) -> List[DataSplit]:
+    """
+    Neuropixels responses to natural movie one, one DataSplit per recording session, with every
+    unit of the session's preprocessed files.
 
-    def __len__(self):
-        return len(self.spikes)
+    Parameters
+    ----------
+    session_ids : Sequence[int]
+        The Allen ids of the sessions, see
+        sparks.data.allen.gratings.get_session_ids_with_data(data_path, 'natural_movie_one', areas).
+    data_path, areas, mode, block, min_snr, dt, frames, batch_size, num_workers :
+        See make_pseudomouse_movies_data.
 
-    def get_full_spikes(self, idx):
-        return self.spikes[idx]
+    Returns
+    -------
+    List[DataSplit]
+    """
+    splits = []
+    for session_id in session_ids:
+        spikes, units_ids = load_session_preprocessed_spikes(data_path, session_id, areas, min_snr=min_snr)
+        splits.append(_npx_split(spikes, units_ids, block, mode, dt, frames, batch_size, num_workers))
+    return splits
+
+
+def make_calcium_movies_data(n_neurons: int = 50,
+                             mode: str = 'prediction',
+                             seed: int = 111,
+                             frames: Optional[torch.Tensor] = None,
+                             batch_size: int = 1,
+                             num_workers: int = 0) -> DataSplit:
+    """
+    Calcium-imaging responses to natural movie one in VISp, from the datasets packaged by CEBRA
+    (see sparks.data.allen.datasets.AllenMoviesCaDataset; needs the `cebra` extra).
+
+    Parameters
+    ----------
+    n_neurons : int, optional
+        The number of neurons, one of the sizes CEBRA provides. Default is 50.
+    mode, frames :
+        See make_pseudomouse_movies_data; frames must be at the movie's 30 fps.
+    seed : int, optional
+        Which of CEBRA's samples of neurons to use. Default is 111.
+    batch_size, num_workers : int, optional
+        For the dataloaders. Defaults are 1 and 0.
+
+    Returns
+    -------
+    DataSplit
+    """
+    return make_split(AllenMoviesCaDataset(n_neurons, seed, train=True, mode=mode, frames=frames),
+                      AllenMoviesCaDataset(n_neurons, seed, train=False, mode=mode, frames=frames),
+                      batch_size=batch_size, num_workers=num_workers)

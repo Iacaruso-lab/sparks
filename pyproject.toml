@@ -33,11 +33,11 @@ dependencies = ["torch>=2.4",
 allen = ["allensdk", "tqdm"]
 # Neural Latents Benchmark loaders (sparks.data.nlb)
 nlb = ["pynwb", "pandas"]
-# Allen calcium-imaging movies dataset, fetched through CEBRA (sparks.data.allen.movies.AllenMoviesCaDataset)
+# Allen calcium-imaging movies dataset, fetched through CEBRA (sparks.data.allen.datasets.AllenMoviesCaDataset)
 cebra = ["cebra"]
 all = ["sparks-ai[allen,nlb,cebra]"]
 demos = ["jupyter", "matplotlib"]
-dev = ["pytest", "ruff", "build", "twine"]
+dev = ["pytest", "ruff", "build", "twine", "tqdm"]
 # MambaBlock needs mamba-ssm, which has no extra here: it must be built against the installed torch
 # and CUDA, i.e. `pip install causal-conv1d mamba-ssm --no-build-isolation`.
 

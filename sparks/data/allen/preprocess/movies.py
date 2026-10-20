@@ -1,5 +1,6 @@
+from typing import TYPE_CHECKING, Dict, Sequence, Tuple
+
 import numpy as np
-from typing import TYPE_CHECKING, List
 
 if TYPE_CHECKING:  # allensdk is optional (the `allen` extra); only needed here for the type hint
     from allensdk.brain_observatory.ecephys.ecephys_project_cache import EcephysProjectCache
@@ -42,20 +43,12 @@ def get_movies_start_stop_times_for_session(session, stim_type, n_frames=None, d
 def get_movie_spikes_for_session(cache: 'EcephysProjectCache',
                                  session_id: int = 0,
                                  stim_type: str = 'natural_movie_one',
-                                 neuron_types: List = ['VISp'], 
+                                 areas: Sequence[str] = ('VISp',),
                                  min_snr: float = 1.5):
     """
-    Get spikes per trial for a given session. For offline preprocessing
-
-    Parameters
-    --------------------------------------
-    :param session: EcephysSession
-    :param neuron_types: List
-    :param start_stop_times: np.ndarray
-    :param min_snr: float
-
-    Returns spikes_session: dict
-    --------------------------------------
+    The spike times of a session's units in `areas` during each presentation of `stim_type`, in
+    seconds from its start: ({unit_id: one list per presentation}, the unit ids), or
+    (None, None) if the session has no complete presentation of it.
     """
 
     session = cache.get_session_data(session_id)
@@ -64,7 +57,7 @@ def get_movie_spikes_for_session(cache: 'EcephysProjectCache',
     if start_stop_times is None:
         return None, None
 
-    correct_units_ids = get_correct_units(session, neuron_types, min_snr)
+    correct_units_ids = get_correct_units(session, areas, min_snr)
     spikes_session = {
         unit_id: [list(session.spike_times[unit_id][np.where((session.spike_times[unit_id]
                                                               >= start_stop_times[i, 0, 0])
@@ -74,3 +67,13 @@ def get_movie_spikes_for_session(cache: 'EcephysProjectCache',
                   for i in range(len(start_stop_times))] for unit_id in correct_units_ids}
 
     return spikes_session, correct_units_ids
+
+
+def pool_session_spikes(spikes_per_session: Dict[int, dict]) -> Tuple[dict, np.ndarray]:
+    """
+    Pools the units of several sessions into one pseudo-population: ({unit key: trials}, unit
+    keys), each unit keyed by its session id followed by its unit id, as strings.
+    """
+    pooled = {str(session_id) + str(unit_id): trials
+              for session_id, spikes in spikes_per_session.items() for unit_id, trials in spikes.items()}
+    return pooled, np.array(list(pooled.keys()))

@@ -6,7 +6,8 @@ import torch
 import sparks
 
 
-@pytest.mark.parametrize('package', ['sparks', 'sparks.models', 'sparks.training', 'sparks.models.controls'])
+@pytest.mark.parametrize('package', ['sparks', 'sparks.models', 'sparks.training', 'sparks.models.controls',
+                                     'sparks.data', 'sparks.data.allen'])
 def test_public_names_are_importable(package):
     module = importlib.import_module(package)
 

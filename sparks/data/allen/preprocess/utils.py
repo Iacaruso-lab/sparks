@@ -1,14 +1,14 @@
-def get_correct_units(session, neuron_types, min_snr=1.5):
-    """"
-    Get ids of the units to be included in the dataset based on neuron types and min_snr
-    """
+from typing import Optional, Sequence
+
+import numpy as np
+
+
+def get_correct_units(session, areas: Optional[Sequence[str]], min_snr: float = 1.5) -> np.ndarray:
+    """The ids of a session's units in `areas` (every area if None) whose SNR is at least `min_snr`."""
     units = session.units
-    spikes_cond = units['snr'] >= min_snr
+    selected = units['snr'] >= min_snr
 
-    if neuron_types is not None:
-        spikes_cond = spikes_cond & units['ecephys_structure_acronym'].isin(neuron_types)
+    if areas is not None:
+        selected = selected & units['ecephys_structure_acronym'].isin(areas)
 
-    correct_units = units[spikes_cond]
-    correct_units_ids = correct_units.index.values
-
-    return correct_units_ids
+    return units[selected].index.values

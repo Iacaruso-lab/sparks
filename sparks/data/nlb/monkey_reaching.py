@@ -1,119 +1,128 @@
 import os
-from typing import List
+from typing import List, Tuple, Union
 
 import numpy as np
 import torch
+
+from sparks.data.base import BaseDataset, DataSplit, make_split
+from sparks.data.misc import smooth as smooth_signal
 from sparks.data.nlb.nwb_interface import NWBDataset
 
-from sparks.data.misc import smooth as smooth_signal
-from sparks.data.base import BaseDataset
+# The eight reach directions of the area2_bump task, in degrees.
+UNIQUE_ANGLES = [0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0]
+# Each trial spans 100 ms before to 500 ms after movement onset, in 1 ms bins.
+ALIGN_FIELD = 'move_onset_time'
+ALIGN_RANGE = (-100, 500)
+N_TIMESTEPS = ALIGN_RANGE[1] - ALIGN_RANGE[0]
+# In 'prediction' mode, behaviour is predicted this many ms after the spikes.
+PREDICTION_LAG = 40
 
 
-def process_dataset(dataset_path, mode='prediction', y_keys: str = 'hand_pos'):
+def process_dataset(data_path: Union[str, os.PathLike], mode: str = 'prediction',
+                    y_keys: str = 'hand_pos') -> Tuple[List, List, List, List]:
+    """
+    Loads the area2_bump NWB file and cuts it into trials aligned on movement onset, grouped by
+    reach direction: (inputs_train, inputs_test, targets_train, targets_test), each a list with
+    one trial DataFrame per direction (see NWBDataset.make_trial_data). Only active trials are
+    kept. In 'prediction', 'spikes_pred' and 'co-smoothing' modes the NLB train and val splits
+    give the train and test sets; otherwise both sets are every trial. Targets are offset by
+    PREDICTION_LAG in 'prediction' mode, and `y_keys` (unless 'direction') is min-max normalised.
+    """
     split_heldout = (mode == 'co-smoothing')
-    dataset = NWBDataset(dataset_path, "*train", split_heldout=split_heldout)
+    dataset = NWBDataset(data_path, "*train", split_heldout=split_heldout)
 
     trial_mask = (~dataset.trial_info.ctr_hold_bump) & (dataset.trial_info.split != 'none')  # only active trials
-    unique_angles = [0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0]
 
-    if mode == 'prediction':
-        lag = 40
-    else:
-        lag = 0
-    align_range = (-100, 500)
-    align_field = 'move_onset_time'
-
-    lag_align_range = (align_range[0] + lag, align_range[1] + lag)
+    lag = PREDICTION_LAG if mode == 'prediction' else 0
+    lag_align_range = (ALIGN_RANGE[0] + lag, ALIGN_RANGE[1] + lag)
 
     if y_keys != 'direction':
         dataset.data[y_keys] = (dataset.data[y_keys] - dataset.data[y_keys].min()) / (dataset.data[y_keys].max() - dataset.data[y_keys].min())
 
+    def trials_per_angle(align_range, split=None):
+        mask = trial_mask if split is None else trial_mask & (dataset.trial_info['split'] == split)
+        return [dataset.make_trial_data(align_field=ALIGN_FIELD, align_range=align_range,
+                                        ignored_trials=~(mask & (dataset.trial_info['cond_dir'] == angle)))
+                for angle in UNIQUE_ANGLES]
+
     if mode in ['prediction', 'spikes_pred', 'co-smoothing']:
-        inputs_train = [dataset.make_trial_data(align_field=align_field, align_range=align_range,
-                                                ignored_trials=~(trial_mask  
-                                                                 & (dataset.trial_info['cond_dir'] == angle)
-                                                                 & (dataset.trial_info['split'] == 'train')))
-                                                for angle in unique_angles]
-        inputs_test = [dataset.make_trial_data(align_field=align_field, align_range=align_range,
-                                               ignored_trials=~(trial_mask 
-                                                                & (dataset.trial_info['cond_dir'] == angle)
-                                                                & (dataset.trial_info['split'] == 'val')))
-                                                for angle in unique_angles]
-        
-        targets_train = [dataset.make_trial_data(align_field=align_field, align_range=lag_align_range,
-                                                 ignored_trials=~(trial_mask 
-                                                                  & (dataset.trial_info['cond_dir'] == angle)
-                                                                  & (dataset.trial_info['split'] == 'train')))
-                                                 for angle in unique_angles]
-        targets_test = [dataset.make_trial_data(align_field=align_field, align_range=lag_align_range,
-                                                ignored_trials=~(trial_mask 
-                                                                 & (dataset.trial_info['cond_dir'] == angle)
-                                                                 & (dataset.trial_info['split'] == 'val')))
-                                                for angle in unique_angles]
+        inputs_train, inputs_test = trials_per_angle(ALIGN_RANGE, 'train'), trials_per_angle(ALIGN_RANGE, 'val')
+        targets_train, targets_test = trials_per_angle(lag_align_range, 'train'), trials_per_angle(lag_align_range, 'val')
     else:
-        inputs_train = [dataset.make_trial_data(align_field=align_field, align_range=align_range,
-                                                ignored_trials=~(trial_mask 
-                                                                 & (dataset.trial_info['cond_dir'] == angle)))
-                                                for angle in unique_angles]
-        inputs_test = inputs_train
-        targets_train = [dataset.make_trial_data(align_field=align_field, align_range=lag_align_range,
-                                                 ignored_trials=~(trial_mask 
-                                                                  & (dataset.trial_info['cond_dir'] == angle)))
-                                                for angle in unique_angles]
-        targets_test = targets_train
+        inputs_train = inputs_test = trials_per_angle(ALIGN_RANGE)
+        targets_train = targets_test = trials_per_angle(lag_align_range)
 
     return inputs_train, inputs_test, targets_train, targets_test
 
 
-def make_monkey_reaching_dataset(dataset_path: os.path,
-                                 y_keys: str = 'hand_pos',
-                                 mode: str = 'prediction',
-                                 batch_size: int = 32,
-                                 smooth: bool = False,
-                                 num_workers: int = 0):
+def make_monkey_reaching_data(data_path: Union[str, os.PathLike],
+                              y_keys: str = 'hand_pos',
+                              mode: str = 'prediction',
+                              smooth: bool = False,
+                              batch_size: int = 32,
+                              num_workers: int = 0) -> DataSplit:
+    """
+    Monkey reaching from the Neural Latents Benchmark area2_bump dataset (needs the `nlb` extra).
 
-    inputs_train, inputs_test, targets_train, targets_test = process_dataset(dataset_path,
-                                                                             mode=mode,
-                                                                             y_keys=y_keys)
+    Parameters
+    ----------
+    data_path : PathLike
+        The dataset's train NWB file (sub-Han_desc-train_behavior+ecephys.nwb).
+    y_keys : str, optional
+        The behavioural variable to predict, e.g. 'hand_pos', 'hand_vel', 'force', 'muscle_len',
+        'joint_ang', or 'direction' (the reach direction's index, at every timestep). Default is
+        'hand_pos'.
+    mode : str, optional
+        'prediction' (predict y_keys PREDICTION_LAG ms ahead), 'spikes_pred', 'co-smoothing'
+        (predict every neuron, including the held-out ones), or 'unsupervised' (targets are the
+        trials' indices). Default is 'prediction'.
+    smooth : bool, optional
+        Whether to smooth the spikes into firing rates. Default is False.
+    batch_size, num_workers : int, optional
+        For the dataloaders. Defaults are 32 and 0.
 
-    train_dataset = MonkeyReachingDataset(inputs_train, targets_train, y_keys, mode=mode, smooth=smooth)
-    train_dl = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    Returns
+    -------
+    DataSplit
+    """
+    inputs_train, inputs_test, targets_train, targets_test = process_dataset(data_path, mode=mode, y_keys=y_keys)
 
-    test_dataset = MonkeyReachingDataset(inputs_test, targets_test, y_keys, mode=mode, smooth=smooth)
-    test_dl = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+    return make_split(MonkeyReachingDataset(inputs_train, targets_train, y_keys, mode=mode, smooth=smooth),
+                      MonkeyReachingDataset(inputs_test, targets_test, y_keys, mode=mode, smooth=smooth),
+                      batch_size=batch_size, num_workers=num_workers)
 
-    return train_dataset, test_dataset, train_dl, test_dl
 
 class MonkeyReachingDataset(BaseDataset):
-    def __init__(self, 
+    dt = 0.001
+
+    def __init__(self,
                  input_data: List,
                  target_data: List,
                  y_keys: str,
                  mode: str = 'prediction',
                  smooth: bool = False) -> None:
-
         """
-        Abstract Dataset for spike encoding
+        Trials of the area2_bump monkey reaching task, in 1 ms bins.
 
         Parameters
-        --------------------------------------
-
-        :param: align_data : List
-        list of aligned data for each angle, each element is a DataFrame with 'spikes' and target keys
-        :param: lag_align_data : List
-        list of lagged aligned data for each angle, each element is a DataFrame with 'spikes' and target keys
-        :param: y_keys : str
-        target key to use, e.g. 'hand_pos', 'hand_vel', 'force', 'muscle_len', 'direction', 'joint_ang'
-        :param: mode : str
-        mode of the dataset, e.g. 'prediction', 'unsupervised', 'spikes_pred'
-        :param: smooth : bool
-        whether to smooth spikes into FRs
+        ----------
+        input_data : List
+            One trial DataFrame per reach direction, with a 'spikes' column group (see
+            process_dataset).
+        target_data : List
+            One trial DataFrame per reach direction, with the target columns.
+        y_keys : str
+            The behavioural variable to predict, see make_monkey_reaching_data.
+        mode : str, optional
+            See make_monkey_reaching_data. Default is 'prediction'.
+        smooth : bool, optional
+            Whether to smooth the spikes into firing rates. Default is False.
         """
 
         super().__init__()
 
         x_dim = input_data[0]['spikes'].shape[-1]
-        T = 600
+        T = N_TIMESTEPS
 
         self.spikes = torch.tensor(np.vstack([input_data[i]['spikes'].to_numpy().reshape([-1, T, x_dim])
                                               for i in range(len(input_data))])).float()
@@ -144,8 +153,8 @@ class MonkeyReachingDataset(BaseDataset):
                                          for i in range(len(target_data))])
 
         self.target_data = torch.tensor(target_data).float()
-        self.y_shape = self.target_data.shape[-1]
-        self.x_shape = self.spikes.shape[-1]
+        # The decoder's output size: the number of directions to classify, or of target features
+        self.target_dim = len(UNIQUE_ANGLES) if y_keys == 'direction' else self.target_data.shape[-1]
 
         if smooth:
             # Firing rates: each trial's spike train smoothed over time, neuron by neuron.
@@ -158,6 +167,10 @@ class MonkeyReachingDataset(BaseDataset):
 
     def __len__(self):
         return len(self.spikes)
+
+    @property
+    def n_neurons(self) -> int:
+        return self.spikes.shape[-1]
 
     def get_spikes(self, index: int):
         return self.spikes[index]

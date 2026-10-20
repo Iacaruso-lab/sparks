@@ -24,6 +24,7 @@ def test_monkey_dataset_shapes():
     spikes, target = dataset[0]
 
     assert len(dataset) == 2
+    assert dataset.n_neurons == N_NEURONS and dataset.target_dim == 2 and dataset.dt == 0.001
     assert spikes.shape == (N_TIMESTEPS, N_NEURONS)
     assert target.shape == (N_TIMESTEPS, 2)
 
