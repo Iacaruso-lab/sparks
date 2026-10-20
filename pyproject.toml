@@ -52,3 +52,9 @@ version = {attr = "sparks.__version__"}
 [tool.setuptools.packages.find]
 include = ["sparks*"]
 namespaces = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tests"]  # lets test modules import the shared tests/helpers.py
+addopts = "-ra --strict-markers"
+xfail_strict = true  # a known-bug test that starts passing must have its xfail marker removed

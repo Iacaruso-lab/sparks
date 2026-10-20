@@ -29,5 +29,6 @@ examples/*.html
 *.mat
 *.pt
 *.pth
+!tests/golden_outputs.pt
 *.out
 results/

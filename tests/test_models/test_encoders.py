@@ -84,3 +84,12 @@ def test_add_neural_block():
     # Test that duplicate session raises error
     with pytest.raises(ValueError):
         encoder.add_neural_block(150, 'session2')
+
+
+@pytest.mark.xfail(reason="Known bug: id_per_session=None is the documented default but raises a TypeError")
+def test_hebbian_encoder_default_session_ids():
+    from sparks.models.encoders import HebbianEncoder
+
+    encoder = HebbianEncoder(n_neurons_per_session=[100], embed_dim=64, latent_dim=32, bottleneck_dim=4)
+
+    assert encoder.session_ids == ['0']
