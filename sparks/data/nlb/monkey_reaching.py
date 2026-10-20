@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from sparks.data.nlb.nwb_interface import NWBDataset
 
-from sparks.data.misc import smooth
+from sparks.data.misc import smooth as smooth_signal
 from sparks.data.base import BaseDataset
 
 
@@ -110,7 +110,7 @@ class MonkeyReachingDataset(BaseDataset):
         whether to smooth spikes into FRs
         """
 
-        super(MonkeyReachingDataset).__init__()
+        super().__init__()
 
         x_dim = input_data[0]['spikes'].shape[-1]
         T = 600
@@ -147,6 +147,12 @@ class MonkeyReachingDataset(BaseDataset):
         self.y_shape = self.target_data.shape[-1]
         self.x_shape = self.spikes.shape[-1]
 
+        if smooth:
+            # Firing rates: each trial's spike train smoothed over time, neuron by neuron.
+            self.spikes = torch.from_numpy(np.stack([
+                np.stack([smooth_signal(neuron, window=200) for neuron in trial.T.numpy()], axis=-1)
+                for trial in self.spikes])).float()
+
         self.smooth = smooth
         self.mode = mode
 
@@ -154,7 +160,7 @@ class MonkeyReachingDataset(BaseDataset):
         return len(self.spikes)
 
     def get_spikes(self, index: int):
-        return torch.concatenate([smooth(feature, window=200) for feature in self.spikes[index]], dim=0) if self.smooth else self.spikes[index]
+        return self.spikes[index]
 
     def get_target(self, index: int):
         if self.mode == 'unsupervised':

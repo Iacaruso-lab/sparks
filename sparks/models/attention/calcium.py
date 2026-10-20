@@ -31,8 +31,7 @@ class CalciumAttentionLayer(DenseHebbianAttentionLayer):
                  max_attn_value: float = 10.,
                  tau_s: float = 1.0,
                  dt: float = 0.001,
-                 n_timescales: int = 5,
-                 **kwargs):
+                 n_timescales: int = 5):
 
         """
         CalciumAttentionLayer class.
@@ -42,8 +41,10 @@ class CalciumAttentionLayer(DenseHebbianAttentionLayer):
             embed_dim (int): The embedding dimension.
             min_attn_value (float): Minimum value for attention coefficients.
             max_attn_value (float): Maximum value for attention coefficients.
-            n_timescales (int): Number of log-spaced (10ms-1s) decay timescales for the
-                                    multi-timescale fluorescence trace fed into the bilinear head.
+            tau_s (float): Scales the range of decay timescales (10ms-1s at tau_s=1).
+            dt (float): The time-step, in seconds.
+            n_timescales (int): Number of log-spaced decay timescales for the multi-timescale
+                                    fluorescence trace fed into the bilinear head.
 
         Attributes:
             n_neurons (int): Total number of neurons.
@@ -56,8 +57,7 @@ class CalciumAttentionLayer(DenseHebbianAttentionLayer):
         super().__init__(n_neurons=n_neurons,
                          embed_dim=embed_dim,
                          tau_s=tau_s,
-                         dt=dt,
-                         **kwargs)
+                         dt=dt)
 
         self.min_attn_value = min_attn_value
         self.max_attn_value = max_attn_value
@@ -79,11 +79,16 @@ class CalciumAttentionLayer(DenseHebbianAttentionLayer):
     def _decay_init(self):
         """
         Initializes the multi-timescale decay parameters shared by the parallel and sequential
-        STDP-coefficient computations below. Timescales are log-spaced (10ms-1s, matching the
-        activity traces in DenseHebbianAttentionLayer); each is independently learnable via a
-        softplus-scaled multiplier around its anchor timescale.
+        STDP-coefficient computations below. Timescales are log-spaced over 10ms-1s, scaled by
+        tau_s, so that several tau_s values give heads integrating over different timescales;
+        each is independently learnable via a softplus-scaled multiplier around its anchor
+        timescale. The anchors are a buffer, so a loaded checkpoint keeps the ones it was trained
+        with.
         """
-        decay_rates = torch.logspace(math.log10(0.01), math.log10(1.0), self.n_timescales)  # [K], seconds
+        # tau_s=0 is LightCalciumAttentionLayer's legacy switch to a non-leaky integrator, which
+        # it implements through dt, so the range is left unscaled there.
+        scale = self.tau_s.item() if self.tau_s.item() > 0 else 1.0
+        decay_rates = scale * torch.logspace(math.log10(0.01), math.log10(1.0), self.n_timescales)  # [K], seconds
         self.register_buffer('decay_rates', decay_rates)
 
         latent_delta_init = math.log(math.exp(1.0) - 1.0)  # inverse softplus of 1.0
@@ -186,7 +191,7 @@ class LightCalciumAttentionLayer(CalciumAttentionLayer):
                  max_attn_value: float = 10.,
                  tau_s: float = 1.0,
                  dt: float = 0.001,
-                 **kwargs):
+                 n_timescales: int = 5):
 
         """
         LightCalciumAttentionLayer
@@ -209,7 +214,7 @@ class LightCalciumAttentionLayer(CalciumAttentionLayer):
                          max_attn_value=max_attn_value,
                          tau_s=tau_s,
                          dt=dt,
-                         **kwargs)
+                         n_timescales=n_timescales)
 
         if tau_s == 0:
             self.tau_s = torch.tensor(1.0)

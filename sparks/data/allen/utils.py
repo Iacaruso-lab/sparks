@@ -73,7 +73,7 @@ def sample_correct_unit_ids(all_units_ids, n_neurons, seed, correct_units_ids=No
 
 def load_preprocessed_spikes(data_dir, neuron_types, stim_type='natural_movie_one', min_snr=1.5, 
                              n_neurons=None, seed=None, correct_units_ids=None):
-    if not hasattr(neuron_types, '__iter__'):
+    if isinstance(neuron_types, str):
         neuron_types = [neuron_types]
 
     all_spikes = {}
@@ -106,7 +106,7 @@ def load_preprocessed_spikes(data_dir, neuron_types, stim_type='natural_movie_on
 
 
 def load_session_preprocessed_spikes(data_dir, session_id, neuron_types, stim_type='natural_movie_one', min_snr=1.5):
-    if not hasattr(neuron_types, '__iter__'):
+    if isinstance(neuron_types, str):
         neuron_types = [neuron_types]
 
     all_spikes = {}

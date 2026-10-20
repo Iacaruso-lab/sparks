@@ -83,8 +83,6 @@ def test_kl_divergence_dispatch():
         kl_divergence('unknown', mu, logvar)
 
 
-@pytest.mark.xfail(reason="Known bug: the first timestep's KL is computed as 0.5 * (...).clamp_min(free_bits), "
-                          "so it is floored at free_bits / 2 instead of free_bits")
 def test_sequential_kl_respects_free_bits():
     """Every per-element KL is floored at free_bits, so their mean can't be lower."""
     mu, logvar = torch.zeros(4, 10, 3), torch.zeros(4, 10, 3)

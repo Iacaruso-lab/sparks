@@ -221,28 +221,41 @@ class SPARKS(torch.nn.Module):
                                             carry_state=carry_state)
 
     def add_session(self, n_neurons: int, session_id: Union[str, int],
-                    hebbian_config: Optional[HebbianAttentionConfig] = None,
-                    new_output_dim: Optional[int] = None) -> None:
+                    new_output_dim: Optional[int] = None, **hebbian_overrides) -> None:
+        """
+        Adds a new session, with its own number of neurons, to the model.
 
-        """ 
-        Adds a new session to the SPARKS model by incorporating a new Hebbian attention block in the encoder
-        and adjusting the decoder to accommodate the new session.
-        This method allows the model to adapt to new sessions with potentially different numbers of neurons.
+        The new session gets its own Hebbian attention layer(s) and Perceiver neuron identity in
+        the shared Hebbian attention block and, if the decoder has one output head per session,
+        its own output head. Everything else is shared with the existing sessions.
+
         Args:
             n_neurons (int): The number of input neurons for the new session.
             session_id (Union[str, int]): A unique identifier for the new session.
-            hebbian_config (HebbianAttentionConfig, optional): Configuration parameters for the new Hebbian block.
-                                                              If None, default parameters are used.
+            new_output_dim (int, optional): The new session's output dimension, before the tau_f
+                future window is applied (as for `output_dim_per_session`). Required when the
+                decoder has one output head per session, and must be left out otherwise (joint or
+                custom decoder).
+            **hebbian_overrides: Settings of the new session's own Hebbian attention layer(s),
+                e.g. `tau_s=0.5` or `data_type='calcium'` (see
+                `HebbianAttentionBlock.add_hebbian_layer` for the full list). Any setting not
+                given is inherited from the model.
         """
-        self.encoder.add_neural_block(n_neurons=n_neurons,
-                                      session_id=session_id,
-                                      hebbian_config=hebbian_config)
-        
-        if not self.decoder.joint_decoder:
+        has_session_heads = (hasattr(self.decoder, 'out_layers')
+                             and not getattr(self.decoder, 'joint_decoder', True))
+        if has_session_heads and new_output_dim is None:
+            raise ValueError("`new_output_dim` is required: the decoder has one output head per session.")
+        if not has_session_heads and new_output_dim is not None:
+            raise ValueError("`new_output_dim` can only be given when the decoder has one output head per "
+                             "session, which this (joint or custom) decoder doesn't.")
+
+        self.encoder.add_neural_block(n_neurons=n_neurons, session_id=session_id, **hebbian_overrides)
+
+        if has_session_heads:
             # Read the width the new head needs off an existing one, rather than off the decoder's
             # hidden stack: every decoder in sparks.models.decoders owns `out_layers`, but only
-            # `mlp` has a `layers` attribute, so keying on the latter broke for `linear`.
+            # `mlp` has a `layers` attribute.
             in_features = next(iter(self.decoder.out_layers.values())).in_features
             self.decoder.out_layers[str(session_id)] = torch.nn.Linear(in_features,
-                                                                       new_output_dim).to(self.device)
+                                                                       new_output_dim * self.tau_f).to(self.device)
     

@@ -162,6 +162,8 @@ class transformer(nn.Module):
         if joint_decoder:
             self.out_layers = nn.Linear(embed_dim, int(output_dim_per_session))
         else:
+            if id_per_session is None:
+                id_per_session = np.arange(len(output_dim_per_session))
             self.out_layers = nn.ModuleDict({str(sess_id): nn.Linear(embed_dim, output_dim)
                                             for sess_id, output_dim in zip(id_per_session, output_dim_per_session)})
         

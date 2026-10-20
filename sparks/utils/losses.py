@@ -202,7 +202,7 @@ def sequential_kl(mu_q, lv_q, z_sample, transition, free_bits=0.5):
     muq, lvq   = mu_q[:, 1:], lv_q[:, 1:]
     kl = 0.5 * (lv_p - lvq + (lvq.exp() + (muq - mu_p)**2) / lv_p.exp() - 1.0)
     kl = kl.clamp_min(free_bits)                                          # per-dim free bits floor
-    kl0 = 0.5 * (mu_q[:, 0]**2 + lv_q[:, 0].exp() - lv_q[:, 0] - 1).clamp_min(free_bits)
+    kl0 = (0.5 * (mu_q[:, 0]**2 + lv_q[:, 0].exp() - lv_q[:, 0] - 1)).clamp_min(free_bits)
     # Mean over batch, time, and latent dim -- same reduction convention as standard_kl, so beta
     # means the same thing regardless of kl_type (this used to sum over time and latent dim,
     # making sequential ~T*L times "stronger" than standard for the same beta).

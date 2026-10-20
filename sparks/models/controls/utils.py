@@ -73,8 +73,11 @@ class EMAControlBlockBase(ControlBlockBase):
 
     def add_hebbian_layer(self, n_neurons: int, session_id: Union[str, int],
                           tau_s: Optional[Union[float, Sequence[float]]] = None,
-                          dt: Optional[float] = None, **kwargs) -> None:
-        """Adds a new session's front-end projection; the shared backend is left untouched."""
+                          dt: Optional[float] = None) -> None:
+        """
+        Adds a new session's front-end projection, with its own tau_s and dt if given (inherited
+        otherwise); the shared backend is left untouched.
+        """
         device = next(self.parameters()).device
         self._add_session_front_end(n_neurons, session_id, tau_s=tau_s, dt=dt, device=device)
 
@@ -82,7 +85,8 @@ class EMAControlBlockBase(ControlBlockBase):
         sid = str(session_id)
         state = self._carried_ema_state.get(sid) if carry_state else None
         ema, new_state = multi_timescale_ema(spikes, self.tau_s_per_head_map[sid], self.dt_map[sid], state=state)
-        self._carried_ema_state[sid] = [s.detach() for s in new_state]
+        if carry_state:
+            self._carried_ema_state[sid] = [s.detach() for s in new_state]
         # Caps how far the EMA's zero-init transient can ramp, which a downstream sequence model
         # otherwise reads off as an absolute clock (see GRUControlBlock). Spikes are binarised per
         # bin, so the EMA is a per-bin spike probability and max_rate * dt is a rate in Hz.

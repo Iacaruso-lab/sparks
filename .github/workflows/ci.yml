@@ -25,8 +25,9 @@ jobs:
       - name: Install CPU-only PyTorch
         run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       # A regular (non-editable) install, so the tests run against the package as users get it.
+      # The nlb extra is light, so its tests run here too; the allen and cebra extras are not.
       - name: Install sparks-ai
-        run: pip install ".[dev]"
+        run: pip install ".[dev,nlb]"
       - name: Run tests
         run: pytest
 

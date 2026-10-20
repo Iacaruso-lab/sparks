@@ -82,3 +82,11 @@ def test_transformer_decoder():
 
     assert decoder(x, sess_id=0).shape == (4, 12, 5)
     assert decoder(x, sess_id=1).shape == (4, 12, 6)
+
+
+def test_transformer_decoder_default_session_ids():
+    from sparks.models.decoders import transformer
+
+    decoder = transformer(embed_dim=8, output_dim_per_session=[5, 6])
+
+    assert decoder(torch.randn(4, 12, 8), sess_id=1).shape == (4, 12, 6)

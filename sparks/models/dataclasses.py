@@ -7,19 +7,26 @@ from sparks.models.blocks import HebbianAttentionBlock, AttentionBlock
 
 @dataclass
 class HebbianAttentionConfig:
-    """Configuration for the Hebbian Attention Block."""
+    """
+    Configuration for the Hebbian Attention Block.
+
+    Some fields only apply to one data_type and are ignored for the other: w_plus and alpha are
+    ephys-only; min_attn_value, max_attn_value and n_timescales are calcium-only.
+    """
     block_class: Type[nn.Module] = HebbianAttentionBlock
-    tau_s: Union[float, List[float]] = 1.0 # Single float = one Hebbian attention head; a list gives one head per tau_s
+    # One Hebbian attention head per value. Ephys: the STDP time constant, in seconds. Calcium:
+    # scales the range of the trace's decay timescales (10ms-1s at tau_s=1).
+    tau_s: Union[float, List[float]] = 1.0
     n_heads: int = 1 # Number of attention heads for perceiver multi-head attention
     dropout: float = 0.
     drop_path: float = 0. # Stochastic depth rate for the block's residual connections
-    dt: float = 0.001      # Default value for the time-step in ms
-    w_plus: float = 0.001
-    alpha: float = 1.1
+    dt: float = 0.001 # The time-step, in seconds
+    w_plus: float = 0.001 # Ephys only
+    alpha: float = 1.1 # Ephys only
     data_type: str = 'ephys' # Type of data, can be 'ephys' or 'calcium'
-    min_attn_value: float = -10. # Minimum value for attention coefficients (only consumed by calcium; ephys's clamp is hardcoded)
-    max_attn_value: float = 10. # Maximum value for attention coefficients (only consumed by calcium; ephys's clamp is hardcoded)
-    n_timescales: int = 5 # Number of log-spaced (10ms-1s) decay timescales for the calcium multi-timescale fluorescence trace
+    min_attn_value: float = -10. # Calcium only: lower bound of the fluorescence trace (ephys's clamp is hardcoded)
+    max_attn_value: float = 10. # Calcium only: upper bound of the fluorescence trace
+    n_timescales: int = 5 # Calcium only: number of log-spaced decay timescales of the fluorescence trace
     config: str = 'light' # 'full' or 'light' to specify the type of Hebbian attention block
     params: Dict[str, Any] = field(default_factory=dict)
 

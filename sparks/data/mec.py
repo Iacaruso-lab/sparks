@@ -7,14 +7,23 @@ from sparks.data.base import BaseDataset
 
 
 def spikes_downsample(spikes, downsampling_factor, mode='mean'):
-    bins = np.arange(0, spikes.shape[-1] + downsampling_factor, downsampling_factor)
-    spike_times = spikes * np.arange(spikes.shape[-1])[None, :]
+    """
+    Downsamples binary spike trains [neurons, time] by `downsampling_factor` along time, keeping a
+    last, partial bin. mode='mean' gives each new bin's spike count divided by downsampling_factor;
+    mode='max' gives 1 if the bin holds any spike and 0 otherwise.
+    """
+    n_neurons, n_timesteps = spikes.shape
+    n_bins = -(-n_timesteps // downsampling_factor)  # ceil
+    padded = np.zeros((n_neurons, n_bins * downsampling_factor))
+    padded[:, :n_timesteps] = spikes
+    bins = padded.reshape(n_neurons, n_bins, downsampling_factor)
+
     if mode == 'mean':
-        return np.vstack([(np.histogram(spike_times_unit[spike_times_unit != 0], bins)[0] / downsampling_factor)[None, :] 
-                          for spike_times_unit in spike_times]).astype(float)
+        return bins.sum(axis=-1) / downsampling_factor
     elif mode == 'max':
-        return np.vstack([(np.histogram(spike_times_unit[spike_times_unit != 0], bins)[0] > 0)[None, :]
-                           for spike_times_unit in spike_times]).astype(float)
+        return (bins > 0).any(axis=-1).astype(float)
+    else:
+        raise ValueError(f"Unknown mode: {mode!r}. Valid modes: 'mean', 'max'.")
 
 
 def make_mec_ca_dataset(spikes_file,
@@ -79,7 +88,7 @@ class MECDataset(BaseDataset):
         :param dt: float
         """
 
-        super(MECDataset).__init__()
+        super().__init__()
 
         self.fs = fs
         self.start_stop_times = start_stop_times

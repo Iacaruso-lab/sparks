@@ -16,6 +16,24 @@ CONFIG_DICT = {'ephys': {'full': FullEphysAttentionLayer,
                            'light': LightCalciumAttentionLayer}
                 }
 
+# Settings each family of attention layers takes, besides n_neurons, embed_dim and tau_s. A block
+# holds the union of both, so each layer is only given its own.
+_LAYER_ARGS = {'ephys': ('dt', 'w_plus', 'alpha'),
+               'calcium': ('dt', 'min_attn_value', 'max_attn_value', 'n_timescales')}
+
+
+def _attention_layer_class(data_type: str, config: str):
+    try:
+        return CONFIG_DICT[data_type][config]
+    except KeyError:
+        raise ValueError(f"Invalid data_type '{data_type}' or config '{config}'. Valid data_types: "
+                         f"{list(CONFIG_DICT.keys())}, valid configs: {list(CONFIG_DICT['ephys'].keys())}")
+
+
+def _tau_s_per_head(tau_s: Union[float, List[float]]) -> List[float]:
+    return list(tau_s) if isinstance(tau_s, (list, tuple)) else [tau_s]
+
+
 class HebbianAttentionBlock(nn.Module):
     def __init__(self,
                  n_neurons_per_session: Dict[str, int],
@@ -68,14 +86,15 @@ class HebbianAttentionBlock(nn.Module):
 
         super(HebbianAttentionBlock, self).__init__()
 
-        try:
-            AttentionStrategy = CONFIG_DICT[data_type][config]
-        except KeyError:
-            raise ValueError(f"Invalid data_type '{data_type}' or config '{config}'. Valid data_types: {list(CONFIG_DICT.keys())}, valid configs: {list(CONFIG_DICT['ephys'].keys())}")
-
-        tau_s_per_head = tau_s if isinstance(tau_s, (list, tuple)) else [tau_s]
-        self.n_hebbian_heads = len(tau_s_per_head)
+        _attention_layer_class(data_type, config)  # fail early on an invalid combination
+        self.n_hebbian_heads = len(_tau_s_per_head(tau_s))
         self.embed_dim = embed_dim
+
+        # Per-session layer settings, reused by add_hebbian_layer for any a new session doesn't override.
+        self._default_layer_config = dict(tau_s=tau_s, dt=dt, w_plus=w_plus, alpha=alpha,
+                                          data_type=data_type, config=config,
+                                          min_attn_value=min_attn_value, max_attn_value=max_attn_value,
+                                          n_timescales=n_timescales)
 
         # Session-specific Hebbian attention layer(s): one ModuleList of heads per session,
         # each sized to that session's own n_neurons (multiple heads, each with its own tau_s,
@@ -84,28 +103,11 @@ class HebbianAttentionBlock(nn.Module):
         # step). New sessions are added in place via add_hebbian_layer instead of building a
         # whole new HebbianAttentionBlock, so the head_proj/ff/perceiver below stay shared.
         self.attention_layers = nn.ModuleDict({
-            str(session_id): nn.ModuleList([
-                AttentionStrategy(n_neurons=n,
-                                  embed_dim=embed_dim,
-                                  tau_s=t,
-                                  dt=dt,
-                                  w_plus=w_plus,
-                                  alpha=alpha,
-                                  min_attn_value=min_attn_value,
-                                  max_attn_value=max_attn_value,
-                                  n_timescales=n_timescales)
-                for t in tau_s_per_head
-            ])
+            str(session_id): self._make_session_layers(n, self._default_layer_config)
             for session_id, n in n_neurons_per_session.items()
         })
         if self.n_hebbian_heads > 1:
             self.head_proj = nn.Linear(self.n_hebbian_heads * embed_dim, embed_dim)
-
-        # Defaults reused by add_hebbian_layer for any field a new session doesn't override.
-        self._default_layer_config = dict(tau_s=tau_s, dt=dt, w_plus=w_plus, alpha=alpha,
-                                          data_type=data_type, config=config,
-                                          min_attn_value=min_attn_value, max_attn_value=max_attn_value,
-                                          n_timescales=n_timescales)
 
         self.ff = FeedForward(embed_dim, embed_dim, dropout=dropout)
         self.drop_path = DropPath(drop_path)
@@ -154,32 +156,25 @@ class HebbianAttentionBlock(nn.Module):
                          max_attn_value=max_attn_value, n_timescales=n_timescales)
         cfg.update({k: v for k, v in overrides.items() if v is not None})
 
-        try:
-            AttentionStrategy = CONFIG_DICT[cfg['data_type']][cfg['config']]
-        except KeyError:
-            raise ValueError(f"Invalid data_type '{cfg['data_type']}' or config '{cfg['config']}'. "
-                            f"Valid data_types: {list(CONFIG_DICT.keys())}, valid configs: {list(CONFIG_DICT['ephys'].keys())}")
-
-        tau_s_per_head = cfg['tau_s'] if isinstance(cfg['tau_s'], (list, tuple)) else [cfg['tau_s']]
-        if len(tau_s_per_head) != self.n_hebbian_heads:
+        n_heads = len(_tau_s_per_head(cfg['tau_s']))
+        if n_heads != self.n_hebbian_heads:
             raise ValueError(f"New session must resolve to {self.n_hebbian_heads} tau_s head(s) to match "
-                            f"this block's head_proj/ff, got {len(tau_s_per_head)}.")
+                            f"this block's head_proj/ff, got {n_heads}.")
 
         device = next(self.parameters()).device
-        self.attention_layers[sid] = nn.ModuleList([
-            AttentionStrategy(n_neurons=n_neurons,
-                              embed_dim=self.embed_dim,
-                              tau_s=t,
-                              dt=cfg['dt'],
-                              w_plus=cfg['w_plus'],
-                              alpha=cfg['alpha'],
-                              min_attn_value=cfg['min_attn_value'],
-                              max_attn_value=cfg['max_attn_value'],
-                              n_timescales=cfg['n_timescales'])
-            for t in tau_s_per_head
-        ]).to(device)
+        self.attention_layers[sid] = self._make_session_layers(n_neurons, cfg).to(device)
 
         self.perceiver.add_session(n_neurons, sid)
+
+    def _make_session_layers(self, n_neurons: int, cfg: dict) -> nn.ModuleList:
+        """
+        Builds one session's Hebbian attention layers, one per tau_s head, from `cfg`, a full set
+        of per-session settings (see _default_layer_config).
+        """
+        layer_class = _attention_layer_class(cfg['data_type'], cfg['config'])
+        layer_args = {name: cfg[name] for name in _LAYER_ARGS[cfg['data_type']]}
+        return nn.ModuleList([layer_class(n_neurons=n_neurons, embed_dim=self.embed_dim, tau_s=t, **layer_args)
+                              for t in _tau_s_per_head(cfg['tau_s'])])
 
     def forward(self, x, session_id: Union[str, int], carry_state: bool = False):
         """
@@ -470,7 +465,8 @@ class PerceiverBlock(nn.Module):
         # time, instead of independently re-reading the neuron population at every timestep.
         state = self._carried_state.get(sid) if carry_state else None
         attn_out, new_state = self._linear_attn_readout(x, state=state)  # Shape: [B*T, bottleneck_dim, D]
-        self._carried_state[sid] = detach_state(new_state)
+        if carry_state:
+            self._carried_state[sid] = detach_state(new_state)
 
         latents = latents_expanded + self.drop_path(attn_out)  # Residual connection around cross attention
 

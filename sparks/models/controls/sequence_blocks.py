@@ -84,7 +84,8 @@ class GRUControlBlock(EMAControlBlockBase):
 
         gru_state = self._carried_gru_state.get(sid) if carry_state else None
         out, h_n = self.gru(x, gru_state)
-        self._carried_gru_state[sid] = h_n.detach()
+        if carry_state:
+            self._carried_gru_state[sid] = h_n.detach()
 
         return self.out_proj(self.dropout(out))  # [B, T, bottleneck_dim * embed_dim]
 

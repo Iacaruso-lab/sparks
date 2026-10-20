@@ -13,12 +13,18 @@ def test_spikes_downsample():
     np.testing.assert_array_equal(spikes_downsample(spikes, 2, mode='max'), [[1, 1, 1], [1, 1, 0]])
 
 
-@pytest.mark.xfail(reason="Known bug: spike times are found as spikes * arange(T) and zeros are discarded, "
-                          "so spikes in the very first time bin are dropped")
 def test_spikes_downsample_keeps_first_bin():
     spikes = np.array([[1, 0, 0, 0, 0, 0]])
 
     np.testing.assert_array_equal(spikes_downsample(spikes, 2, mode='max'), [[1, 0, 0]])
+
+
+def test_spikes_downsample_keeps_a_last_partial_bin():
+    spikes = np.array([[1, 1, 0, 1, 1]])
+
+    np.testing.assert_array_equal(spikes_downsample(spikes, 2, mode='mean'), [[1., 0.5, 0.5]])
+    with pytest.raises(ValueError):
+        spikes_downsample(spikes, 2, mode='unknown')
 
 
 def test_mec_dataset():

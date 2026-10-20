@@ -1,5 +1,5 @@
 import os
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 import torch
@@ -14,9 +14,10 @@ def make_allen_movies_dataset(output_dir: os.path,
                               neuron_types: List = ['VISp'],
                               dt: float = 0.01,
                               block: str = 'first',
-                              mode: str = 'reconstruction',
+                              mode: str = 'prediction',
                               num_workers: int = 0,
-                              batch_size: int = 1):
+                              batch_size: int = 1,
+                              frames: Optional[torch.Tensor] = None):
     """
     Creates datasets and data loaders per session for the natural movies from the
      Allen Brain Observatory Visual coding ephys dataset.
@@ -30,15 +31,17 @@ def make_allen_movies_dataset(output_dir: os.path,
     :param neuron_types: List
         list of neuron types to be used
     :param dt: float
-        sampling rate of the ephys data
-    :param num_train_examples: int
-        number of training example per session
-    :param num_test_examples: int
-        number of test example per session
+        time step of the binned spikes, in seconds
+    :param block: str
+        which movie presentations to train and test on, see sparks.data.allen.utils.get_train_test_indices
+    :param mode: str
+        what the targets are, see sparks.data.allen.movies.AllenMoviesDataset
     :param num_workers: int
         for the DataLoader
     :param batch_size: int
         for the DataLoader
+    :param frames: torch.Tensor, optional
+        movie frame at each timestep, required when mode == 'reconstruction'
     :return: (List, List, List, List)
         train_datasets, test_datasets, train_dls, test_dls
     """
@@ -57,12 +60,14 @@ def make_allen_movies_dataset(output_dir: os.path,
         spikes, correct_units_ids = load_session_preprocessed_spikes(output_dir, session_id, neuron_types)
 
         train_spikes_dict = make_spikes_dict(spikes, train_indices, correct_units_ids)
-        train_datasets.append(AllenMoviesNpxDataset(train_spikes_dict, correct_units_ids, dt))
+        train_datasets.append(AllenMoviesNpxDataset(train_spikes_dict, correct_units_ids, dt,
+                                                    mode=mode, frames=frames))
         train_dls.append(torch.utils.data.DataLoader(train_datasets[-1], batch_size=batch_size,
                                                      shuffle=True, num_workers=num_workers))
 
         test_spikes_dict = make_spikes_dict(spikes, test_indices, correct_units_ids)
-        test_datasets.append(AllenMoviesNpxDataset(test_spikes_dict, correct_units_ids, dt))
+        test_datasets.append(AllenMoviesNpxDataset(test_spikes_dict, correct_units_ids, dt,
+                                                   mode=mode, frames=frames))
         test_dls.append(torch.utils.data.DataLoader(test_datasets[-1], batch_size=batch_size,
                                                     shuffle=False, num_workers=num_workers))
 

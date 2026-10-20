@@ -1,5 +1,6 @@
 from typing import Any, Dict, Optional, Tuple, Union, List
 
+import itertools
 import math
 import warnings
 import numpy as np
@@ -148,11 +149,14 @@ def update_and_reset(model: SPARKS,
     Computes clipped gradients, updates the model's weights using the computed loss and the optimizer,
     and then resets the gradients. This function is typically called after every batch during training.
 
+    Every parameter the optimizer updates is clipped and reset, including ones outside `model`
+    such as a sequential-KL `GaussianTransition` (see `build_param_groups`).
+
     Args:
         model (SPARKS): The model instance.
         loss (torch.Tensor): The computed loss for the current batch of data.
         optimizer (torch.optim.Optimizer): The optimizer algorithm used to update the model's parameters.
-        max_val (float, optional): The maximum L2 norm for gradient clipping. Default is 1.
+        max_val (float, optional): The maximum L2 norm for gradient clipping. Default is 5.
         warn_factor (float, optional): Warn if the pre-clip gradient norm exceeds max_val by more
             than this factor, since that means clipping is rescaling every step rather than only
             clipping outliers (see `measure_grad_norm`). Default is 10.
@@ -173,6 +177,19 @@ def update_and_reset(model: SPARKS,
 
     loss.backward()
 
+    return _clip_step_and_reset(model, optimizer, max_val=max_val, warn_factor=warn_factor,
+                                clip_groups=clip_groups)
+
+
+def _clip_step_and_reset(model: torch.nn.Module,
+                         optimizer: torch.optim.Optimizer,
+                         max_val: float,
+                         warn_factor: float = 10.,
+                         clip_groups: Optional[List[Tuple[str, List[torch.nn.Parameter]]]] = None) -> float:
+    """
+    The part of `update_and_reset` after the backward pass: clips the gradients, steps the
+    optimizer and resets the gradients. Returns the total gradient L2 norm before clipping.
+    """
     def _clip_and_warn(params, label=None):
         norm = torch.nn.utils.clip_grad_norm_(params, max_norm=max_val).item()
         if norm > warn_factor * max_val:
@@ -187,22 +204,28 @@ def update_and_reset(model: SPARKS,
             )
         return norm
 
+    # Everything the optimizer updates -- which can include parameters outside `model`, such as a
+    # sequential-KL GaussianTransition -- plus any of model's own parameters it doesn't.
+    params = list({id(p): p for p in itertools.chain(
+        (p for group in optimizer.param_groups for p in group['params']), model.parameters())}.values())
+
     if not clip_groups:
-        grad_norm = _clip_and_warn(list(model.parameters()))
+        grad_norm = _clip_and_warn(params)
     else:
         grouped_ids = set()
         sub_norms = []
-        for label, params in clip_groups:
-            params = list(params)
-            grouped_ids.update(id(p) for p in params)
-            sub_norms.append(_clip_and_warn(params, label=label))
-        remaining = [p for p in model.parameters() if id(p) not in grouped_ids]
+        for label, group_params in clip_groups:
+            group_params = list(group_params)
+            grouped_ids.update(id(p) for p in group_params)
+            sub_norms.append(_clip_and_warn(group_params, label=label))
+        remaining = [p for p in params if id(p) not in grouped_ids]
         if remaining:
             sub_norms.append(_clip_and_warn(remaining, label="remaining"))
         grad_norm = math.sqrt(sum(n ** 2 for n in sub_norms))
 
     optimizer.step()
 
+    optimizer.zero_grad(set_to_none=True)
     model.zero_grad(set_to_none=True)
 
     return grad_norm
@@ -425,35 +448,7 @@ def train_on_batch_and_record_grad_norm(model: SPARKS,
     # clip_grad_norm_ would let whichever component has the largest raw gradient scale set the
     # clip ratio (and starve the update) for every other component, no matter how healthy those
     # other components' own gradients already were.
-    grouped_ids = set()
-    for label, params in per_module_clip_groups(model):
-        grouped_ids.update(id(p) for p in params)
-        norm = torch.nn.utils.clip_grad_norm_(params, max_norm=max_grad_norm).item()
-        if norm > 10 * max_grad_norm:
-            warnings.warn(
-                f"Gradient norm ({label}) ({norm:.1f}) is {norm / max_grad_norm:.0f}x the clip threshold "
-                f"max_val={max_grad_norm} -- clip_grad_norm_ is rescaling every update by "
-                f"~{max_grad_norm / norm:.1e}, not just clipping outlier batches. Consider raising "
-                f"max_val (use measure_grad_norm on a real batch to calibrate it) or check whether "
-                f"loss_fn sums rather than averages over batch/time/features.",
-                RuntimeWarning,
-            )
-    remaining = [p for p in model.parameters() if id(p) not in grouped_ids]
-    if remaining:
-        norm = torch.nn.utils.clip_grad_norm_(remaining, max_norm=max_grad_norm).item()
-        if norm > 10 * max_grad_norm:
-            warnings.warn(
-                f"Gradient norm (remaining) ({norm:.1f}) is {norm / max_grad_norm:.0f}x the clip "
-                f"threshold max_val={max_grad_norm} -- clip_grad_norm_ is rescaling every update by "
-                f"~{max_grad_norm / norm:.1e}, not just clipping outlier batches. Consider raising "
-                f"max_val (use measure_grad_norm on a real batch to calibrate it) or check whether "
-                f"loss_fn sums rather than averages over batch/time/features.",
-                RuntimeWarning,
-            )
-
-    optimizer.step()
-
-    model.zero_grad(set_to_none=True)
+    _clip_step_and_reset(model, optimizer, max_val=max_grad_norm, clip_groups=per_module_clip_groups(model))
 
     return loss.item(), grad_norm_meas
 

@@ -139,20 +139,51 @@ def test_invalid_constructor_arguments_raise(make_model):
         make_model(id_per_session=['a', 'b'])
 
 
-@pytest.mark.xfail(reason="Known bug: a partial hebbian_config passed to add_session resets every "
-                          "per-session field (data_type, config, ...) to its default")
-def test_add_session_keeps_unspecified_hebbian_settings(make_model):
-    model = make_model(hebbian_config=HebbianAttentionConfig(data_type='calcium', config='full'))
+def test_add_session_overrides_only_the_given_settings(make_model):
+    model = make_model(hebbian_config=HebbianAttentionConfig(data_type='calcium', config='full', dt=0.01))
 
-    model.add_session(n_neurons=7, session_id='new', new_output_dim=OUTPUT_DIM,
-                      hebbian_config=HebbianAttentionConfig(tau_s=0.5))
+    model.add_session(n_neurons=7, session_id='new', new_output_dim=OUTPUT_DIM, tau_s=0.5)
 
     layers = model.encoder.hebbian_block.attention_layers
-    assert type(layers['new'][0]) is type(layers['0'][0])
+    assert type(layers['new'][0]) is type(layers['0'][0])  # data_type and config inherited
+    assert layers['new'][0].dt.item() == pytest.approx(0.01)  # inherited
+    assert layers['new'][0].tau_s.item() == 0.5  # overridden
 
 
-@pytest.mark.xfail(reason="Known bug: add_session sizes the new decoder head as new_output_dim rather "
-                          "than new_output_dim * tau_f, unlike the heads built at construction")
+def test_add_session_rejects_unknown_settings(make_model):
+    model = make_model(id_per_session=['a'])
+
+    with pytest.raises(TypeError):
+        model.add_session(n_neurons=7, session_id='b', new_output_dim=6, tua_s=0.5)
+    assert 'b' not in model.encoder.session_ids
+
+
+def test_add_session_output_dim_must_match_the_decoder(make_model):
+    per_session_heads = make_model(id_per_session=['a'])
+    with pytest.raises(ValueError):  # one output head per session: its size is needed
+        per_session_heads.add_session(n_neurons=7, session_id='b')
+
+    joint = make_model(id_per_session=['a'], joint_decoder=True)
+    with pytest.raises(ValueError):  # one shared output head: nothing to size
+        joint.add_session(n_neurons=7, session_id='b', new_output_dim=6)
+
+    # Neither failed call added the session halfway.
+    assert per_session_heads.encoder.session_ids == joint.encoder.session_ids == ['a']
+
+
+def test_add_session_with_custom_decoder(make_model, spikes):
+    """A custom decoder manages its own outputs, so only the encoder gets the new session."""
+    class ConstantDecoder(torch.nn.Module):
+        def forward(self, x, session_id):
+            return torch.zeros(*x.shape[:-1], 3)
+
+    model = make_model(id_per_session=['a'], decoder=ConstantDecoder(), output_dim_per_session=None)
+
+    model.add_session(n_neurons=7, session_id='b')
+
+    assert model(spikes[..., :7], session_id='b')[1].shape == (BATCH, N_TIMESTEPS, 3)
+
+
 def test_add_session_accounts_for_future_window(make_model, spikes):
     model = make_model(id_per_session=['a'], tau_f=2)
 

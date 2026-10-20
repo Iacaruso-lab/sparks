@@ -62,25 +62,23 @@ class CoefficientAttentionBlock(ControlBlockBase):
                                         dropout=dropout, drop_path=drop_path)
         self._carried_state = {}  # session_id (str) -> list of per-head states
 
-    def add_hebbian_layer(self, n_neurons: int, session_id: Union[str, int],
-                          tau_s: Optional[Union[float, Sequence[float]]] = None, **kwargs) -> None:
+    def add_hebbian_layer(self, n_neurons: int, session_id: Union[str, int], **overrides) -> None:
         """
         Adds a new session's v_proj head(s) and Perceiver neuron identity, matching
         HebbianAttentionBlock.add_hebbian_layer. head_proj/ff/perceiver's shared parts are left
-        untouched. Any HebbianAttentionConfig field this control doesn't use (dt, w_plus, ...) is
-        silently accepted and ignored, same as __init__.
+        untouched. Every session shares the same tau_s and dt here, so no per-session setting
+        can be overridden.
         """
         sid = str(session_id)
         if sid in self.v_proj:
             raise ValueError(f"Session ID '{sid}' already exists in this control block.")
-
-        heads = tau_s_per_head(tau_s) if tau_s is not None else self.tau_s_per_head
-        if len(heads) != self.n_coeff_heads:
-            raise ValueError(f"New session must resolve to {self.n_coeff_heads} tau_s head(s) to match "
-                            f"this block's head_proj/ff, got {len(heads)}.")
+        if overrides:
+            raise ValueError(f"{type(self).__name__} uses the same settings for every session, so they "
+                             f"can't be overridden per session (got {sorted(overrides)}).")
 
         device = next(self.parameters()).device
-        self.v_proj[sid] = nn.ModuleList([nn.Linear(n_neurons, self.embed_dim) for _ in heads]).to(device)
+        self.v_proj[sid] = nn.ModuleList([nn.Linear(n_neurons, self.embed_dim)
+                                          for _ in self.tau_s_per_head]).to(device)
         self.perceiver.add_session(n_neurons, sid)
 
     def compute_coefficients(self, spikes: torch.Tensor, session_id: str, head: int = 0, state=None):
@@ -101,7 +99,8 @@ class CoefficientAttentionBlock(ControlBlockBase):
             coeffs, new_state = self.compute_coefficients(spikes, sid, head=head, state=states[head])
             new_states.append(detach_state(new_state))
             head_outs.append(self.v_proj[sid][head](coeffs))  # [B, T, N, D]
-        self._carried_state[sid] = new_states
+        if carry_state:
+            self._carried_state[sid] = new_states
 
         x = self.head_proj(torch.cat(head_outs, dim=-1)) if self.n_coeff_heads > 1 else head_outs[0]
         ffn_out = self.ff(x)
@@ -164,8 +163,8 @@ class SymmetricHebbianAttentionBlock(CoefficientAttentionBlock):
         self.latent_delta[sid] = nn.Parameter(torch.full((self.n_coeff_heads, 1, n_neurons), init))
         self.latent_w[sid] = nn.Parameter(torch.full((self.n_coeff_heads, 1, n_neurons), init))
 
-    def add_hebbian_layer(self, n_neurons: int, session_id: Union[str, int], **kwargs) -> None:
-        super().add_hebbian_layer(n_neurons, session_id, **kwargs)
+    def add_hebbian_layer(self, n_neurons: int, session_id: Union[str, int], **overrides) -> None:
+        super().add_hebbian_layer(n_neurons, session_id, **overrides)
         self._add_session_latents(n_neurons, session_id)
 
     def get_parameters(self, session_id: str, head: int = 0):

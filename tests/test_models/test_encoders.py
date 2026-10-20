@@ -45,7 +45,6 @@ def test_add_neural_block():
     """Adding a new session extends the existing shared Hebbian attention block in place,
     rather than creating a new one."""
     from sparks.models.encoders import HebbianEncoder
-    from sparks.models.dataclasses import HebbianAttentionConfig
 
     embed_dim = 64
     bottleneck_dim = 4
@@ -60,11 +59,7 @@ def test_add_neural_block():
     shared_block = encoder.hebbian_block
 
     # Add a new session
-    encoder.add_neural_block(
-        n_neurons=150,
-        session_id='session2',
-        hebbian_config=HebbianAttentionConfig()
-    )
+    encoder.add_neural_block(n_neurons=150, session_id='session2', tau_s=0.5)
 
     assert 'session2' in encoder.session_ids
     assert encoder.n_neurons_map['session2'] == 150
@@ -86,7 +81,6 @@ def test_add_neural_block():
         encoder.add_neural_block(150, 'session2')
 
 
-@pytest.mark.xfail(reason="Known bug: id_per_session=None is the documented default but raises a TypeError")
 def test_hebbian_encoder_default_session_ids():
     from sparks.models.encoders import HebbianEncoder
 

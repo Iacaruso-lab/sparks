@@ -76,3 +76,36 @@ def test_reset_state_restarts_from_zero(layer_class):
     layer.reset_state()
 
     torch.testing.assert_close(layer(x[:, :8], carry_state=True), fresh)
+
+
+@pytest.mark.parametrize('layer_class', LAYER_CLASSES)
+def test_layers_reject_settings_they_do_not_use(layer_class):
+    unused = 'n_timescales' if layer_class in (FullEphysAttentionLayer, LightEphysAttentionLayer) else 'w_plus'
+
+    with pytest.raises(TypeError):
+        layer_class(n_neurons=N_NEURONS, embed_dim=EMBED_DIM, **{unused: 1})
+
+
+@pytest.mark.parametrize('layer_class', [FullCalciumAttentionLayer, LightCalciumAttentionLayer])
+def test_calcium_tau_s_scales_the_timescales(layer_class):
+    default = layer_class(n_neurons=N_NEURONS, embed_dim=EMBED_DIM)
+    slower = layer_class(n_neurons=N_NEURONS, embed_dim=EMBED_DIM, tau_s=2.)
+
+    torch.testing.assert_close(default.decay_rates, torch.logspace(-2, 0, 5))  # 10ms-1s
+    torch.testing.assert_close(slower.decay_rates, 2 * default.decay_rates)
+
+    # Same weights, different timescales: different coefficients.
+    slower.load_state_dict({**default.state_dict(), 'decay_rates': slower.decay_rates, 'tau_s': slower.tau_s})
+    x = make_inputs(layer_class)
+    assert not torch.allclose(slower.stdp_forward(x), default.stdp_forward(x))
+
+
+def test_calcium_checkpoints_keep_their_timescales():
+    """The timescales are a buffer, so a checkpoint reproduces the model it was saved from."""
+    saved = LightCalciumAttentionLayer(n_neurons=N_NEURONS, embed_dim=EMBED_DIM, tau_s=2.)
+    loaded = LightCalciumAttentionLayer(n_neurons=N_NEURONS, embed_dim=EMBED_DIM)
+
+    loaded.load_state_dict(saved.state_dict())
+
+    x = make_inputs(LightCalciumAttentionLayer)
+    torch.testing.assert_close(loaded.stdp_forward(x), saved.stdp_forward(x))

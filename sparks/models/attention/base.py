@@ -25,8 +25,7 @@ class BaseHebbianAttentionLayer(nn.Module):
                  tau_s: float = 1.0,
                  dt: float = 0.001,
                  w_plus: float = 0.001,
-                 alpha: float = 1.1,
-                 **kwargs):
+                 alpha: float = 1.1):
 
         super().__init__()
         self.n_neurons = n_neurons
@@ -79,8 +78,7 @@ class DenseHebbianAttentionLayer(BaseHebbianAttentionLayer):
                  tau_s: float = 1.0,
                  dt: float = 0.001,
                  w_plus: float = 0.001,
-                 alpha: float = 1.1,
-                 **kwargs):
+                 alpha: float = 1.1):
 
         super().__init__(n_neurons=n_neurons,
                          embed_dim=embed_dim,
@@ -101,13 +99,15 @@ class DenseHebbianAttentionLayer(BaseHebbianAttentionLayer):
                 the (detached) state at the end of this call for the next one -- lets a long
                 recording be walked through in consecutive chunks with continuous dynamics
                 instead of resetting to zero at every chunk boundary. State is detached before
-                being stored, so gradients don't flow back across chunks (truncated BPTT).
-                Default is False (matches the original, stateless-per-call behavior). Call
-                reset_state() before the first chunk of a new, unrelated sequence.
+                being stored, so gradients don't flow back across chunks (truncated BPTT). If
+                False (default), the call is stateless in both directions: it starts from zero
+                and leaves any stored state untouched. Call reset_state() before the first chunk
+                of a new, unrelated sequence.
         """
         state = self._carried_state if carry_state else None
         stdp, new_state = self.stdp_coefficients(spikes, state=state)
-        self._carried_state = detach_state(new_state)
+        if carry_state:
+            self._carried_state = detach_state(new_state)
         return self.v_proj(stdp)  # [B, T, N, D] — real scores
 
     def stdp_forward(self, spikes, carry_state: bool = False):

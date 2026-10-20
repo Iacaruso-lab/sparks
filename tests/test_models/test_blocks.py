@@ -95,8 +95,6 @@ def test_reset_state_only_affects_the_given_session(spikes):
     torch.testing.assert_close(block(second, 'b', carry_state=True), expected_b)
 
 
-@pytest.mark.xfail(reason="Known bug: forward() stores its end state even with carry_state=False, "
-                          "so a later carried call resumes from it instead of from zero")
 def test_uncarried_forward_does_not_leave_state_behind(spikes):
     block = make_block().eval()
     fresh = block(spikes[:, :8], 'a', carry_state=True)

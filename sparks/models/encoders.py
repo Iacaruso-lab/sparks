@@ -51,6 +51,11 @@ class HebbianEncoder(nn.Module):
         if isinstance(hebbian_config, list):
             hebbian_config = hebbian_config[0]
 
+        if isinstance(n_neurons_per_session, int):
+            n_neurons_per_session = [n_neurons_per_session]
+        if id_per_session is None:
+            id_per_session = range(len(n_neurons_per_session))
+
         self.session_ids = [str(session_id) for session_id in id_per_session] # Ensure string keys for ModuleDict
         self.n_neurons_map = {session_id: n for session_id, n in zip(self.session_ids, n_neurons_per_session)}
 
@@ -97,15 +102,7 @@ class HebbianEncoder(nn.Module):
         # wrap in a small container module
         return nn.ModuleDict({'mu': mu_layer, 'logvar': logvar_layer})
 
-    # Fields from HebbianAttentionConfig.params that shape a session's own Hebbian attention
-    # layer(s) and can therefore still be overridden per session via add_neural_block. n_heads,
-    # dropout, and drop_path are excluded since they're baked into the shared
-    # head_proj/ff/perceiver built once at __init__ time.
-    _PER_SESSION_LAYER_FIELDS = ('tau_s', 'dt', 'w_plus', 'alpha', 'data_type', 'config',
-                                 'min_attn_value', 'max_attn_value', 'n_timescales')
-
-    def add_neural_block(self, n_neurons: int, session_id: Union[str, int],
-                         hebbian_config: Optional[HebbianAttentionConfig] = None):
+    def add_neural_block(self, n_neurons: int, session_id: Union[str, int], **hebbian_overrides):
         """
         Dynamically adds a new Hebbian attention layer for a new session to the shared Hebbian
         attention block.
@@ -119,24 +116,17 @@ class HebbianEncoder(nn.Module):
         Args:
             n_neurons (int): The number of input neurons for the new session.
             session_id (Union[str, int]): A unique identifier for the new session.
-            hebbian_config (HebbianConfig): Configuration overrides for the new session's own
-                Hebbian attention layer(s) (e.g. tau_s, data_type). Fields that instead affect
-                the shared head_proj/ff/perceiver (n_heads, dropout, drop_path)
-                are ignored since those are fixed at construction time. Defaults to reusing the
-                values this encoder's Hebbian attention block was itself built with.
-
+            **hebbian_overrides: Settings of the new session's own Hebbian attention layer(s),
+                e.g. `tau_s=0.5` (see `HebbianAttentionBlock.add_hebbian_layer`). Any setting not
+                given is inherited from this encoder's Hebbian attention block. Settings of the
+                shared parts (n_heads, dropout, drop_path) can't differ between sessions.
         """
 
         sid = str(session_id)
         if sid in self.session_ids:
             raise ValueError(f"Session ID '{sid}' already exists. Please choose a unique ID.")
 
-        layer_kwargs = {}
-        if hebbian_config is not None:
-            layer_kwargs = {k: v for k, v in hebbian_config.params.items()
-                            if k in self._PER_SESSION_LAYER_FIELDS}
-
-        self.hebbian_block.add_hebbian_layer(n_neurons=n_neurons, session_id=sid, **layer_kwargs)
+        self.hebbian_block.add_hebbian_layer(n_neurons=n_neurons, session_id=sid, **hebbian_overrides)
         self.hebbian_block.to(self.device)
 
         self.session_ids.append(sid)

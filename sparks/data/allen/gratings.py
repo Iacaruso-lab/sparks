@@ -37,7 +37,7 @@ class AllenGratingsDataset(BaseDataset):
             can differ between an otherwise matching train and test set.
         """
 
-        super(AllenGratingsDataset).__init__()
+        super().__init__()
 
         self.dt = dt
         if trial_len is None:

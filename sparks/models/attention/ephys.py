@@ -25,8 +25,7 @@ class EphysAttentionLayer(DenseHebbianAttentionLayer):
                  tau_s: float = 1.0,
                  dt: float = 0.001,
                  w_plus: float = 0.001,
-                 alpha: float = 1.1,
-                 **kwargs):
+                 alpha: float = 1.1):
 
         """
         EphysAttentionLayer class.
@@ -60,8 +59,7 @@ class EphysAttentionLayer(DenseHebbianAttentionLayer):
                          tau_s=tau_s,
                          dt=dt,
                          w_plus=w_plus,
-                         alpha=alpha,
-                         **kwargs)
+                         alpha=alpha)
 
     def stdp_coefficients(self, spikes: torch.Tensor, state=None):
         """
@@ -107,8 +105,7 @@ class FullEphysAttentionLayer(EphysAttentionLayer):
                  tau_s: float = 1.0,
                  dt: float = 0.001,
                  w_plus: float = 0.001,
-                 alpha: float = 1.1,
-                 **kwargs):
+                 alpha: float = 1.1):
 
         """
         FullEphysAttentionLayer class.
@@ -142,8 +139,7 @@ class FullEphysAttentionLayer(EphysAttentionLayer):
                          tau_s=tau_s,
                          dt=dt,
                          w_plus=w_plus,
-                         alpha=alpha,
-                         **kwargs)
+                         alpha=alpha)
 
         self._decay_init()
         self._init_update_weights()
@@ -282,8 +278,7 @@ class LightEphysAttentionLayer(EphysAttentionLayer):
                  tau_s: float = 1.0,
                  dt: float = 0.001,
                  w_plus: float = 0.001,
-                 alpha: float = 1.1,
-                 **kwargs):
+                 alpha: float = 1.1):
 
         """
         LightEphysAttentionLayer class.
@@ -317,8 +312,7 @@ class LightEphysAttentionLayer(EphysAttentionLayer):
                          tau_s=tau_s,
                          dt=dt,
                          w_plus=w_plus,
-                         alpha=alpha,
-                         **kwargs)
+                         alpha=alpha)
 
     def _stdp_coefficients_sequential(self, spikes: torch.Tensor, state=None):
         """

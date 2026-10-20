@@ -10,7 +10,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
         """
 
-        super(BaseDataset).__init__()
+        super().__init__()
 
         if type(self) is BaseDataset:
             raise TypeError("BaseDataset is an abstract class and cannot be instantiated directly")

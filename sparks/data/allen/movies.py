@@ -1,36 +1,55 @@
+from typing import Optional
 
 import numpy as np
 import torch
 
 from sparks._optional import import_optional
-from sparks.data.allen.utils import make_spike_histogram
+from sparks.data.allen.utils import get_frame_indices_per_timestep, make_spike_histogram
 from sparks.data.base import BaseDataset
+
+MODES = ('prediction', 'reconstruction', 'unsupervised', 'denoising')
 
 
 class AllenMoviesDataset(BaseDataset):
     def __init__(self,
-                 mode: str = 'prediction') -> None:
+                 frame_indices: torch.Tensor,
+                 mode: str = 'prediction',
+                 frames: Optional[torch.Tensor] = None) -> None:
         """
         Pseudo-mouse abstract dataset class for Allen Brain Observatory Visual coding natural movies data
 
         Parameters
         ----------
+        frame_indices : torch.Tensor
+            [T], the index of the movie frame showing at each timestep of a trial.
         mode : str, optional
-            'prediction': target is the movie frame index at each timestep.
-            'reconstruction': target is `frames`, the movie's own frame data (see below).
+            'prediction': target is the movie frame index at each timestep, [T].
+            'reconstruction': target is `frames`, the movie frame showing at each timestep.
             'unsupervised': target is the spikes themselves.
             'denoising': target is another randomly chosen trial's spikes.
         frames : torch.Tensor, optional
-            The movie's frame data (e.g. [n_frames, height, width]), shared across every trial
-            since all presentations show the same movie. Required when mode == 'reconstruction'.
+            [T, ...], the movie frame showing at each timestep of a trial (see
+            `sparks.data.allen.utils.get_frames`), shared by every trial since all presentations
+            show the same movie. Required when mode == 'reconstruction'.
 
         Each __getitem__ call returns the whole recording -- to process a long recording in
         consecutive chunks (e.g. for a stateful encoder), slice the returned (spikes, target)
         tensors yourself; see sparks.utils.train's chunked training helpers.
         """
 
-        super(AllenMoviesDataset).__init__()
+        super().__init__()
+        if mode not in MODES:
+            raise ValueError(f"Unknown mode: {mode!r}. Valid modes: {MODES}.")
+        if mode == 'reconstruction':
+            if frames is None:
+                raise ValueError("mode='reconstruction' needs `frames`, e.g. from sparks.data.allen.utils.get_frames.")
+            if len(frames) != len(frame_indices):
+                raise ValueError(f"`frames` must have one frame per timestep ({len(frame_indices)}), "
+                                 f"got {len(frames)}. Use get_frames with the dataset's dt.")
+
+        self.frame_indices = frame_indices
         self.mode = mode
+        self.frames = frames
 
     def __len__(self):
         raise NotImplementedError
@@ -47,10 +66,10 @@ class AllenMoviesDataset(BaseDataset):
         elif self.mode == 'denoising':
             other_index = np.random.randint(0, len(self))
             return self.get_spikes(other_index)
-        elif self.mode in ['prediction', 'reconstruction']:
-            return torch.tensor(index).unsqueeze(0)
+        elif self.mode == 'prediction':
+            return self.frame_indices
         else:
-            raise ValueError(f"Unknown mode: {self.mode!r}.")
+            return self.frames
 
 
 class AllenMoviesNpxDataset(AllenMoviesDataset):
@@ -58,7 +77,8 @@ class AllenMoviesNpxDataset(AllenMoviesDataset):
                  spikes: dict,
                  good_units_ids: np.ndarray,
                  dt: float = 0.01,
-                 mode: str = 'prediction') -> None:
+                 mode: str = 'prediction',
+                 frames: Optional[torch.Tensor] = None) -> None:
         """
         Pseudo-mouse dataset class for Allen Brain Observatory Visual coding natural movies data
 
@@ -71,7 +91,8 @@ class AllenMoviesNpxDataset(AllenMoviesDataset):
         :param frames: see AllenMoviesDataset
         """
 
-        super(AllenMoviesNpxDataset, self).__init__(mode=mode)
+        frame_indices = torch.from_numpy(get_frame_indices_per_timestep(dt)).long()
+        super().__init__(frame_indices=frame_indices, mode=mode, frames=frames)
 
         self.good_units_ids = good_units_ids
         self.spikes = spikes
@@ -93,9 +114,11 @@ class AllenMoviesCaDataset(AllenMoviesDataset):
                  n_neurons: int = 10,
                  seed: int = 111,
                  train: bool = True,
-                 mode: str = 'prediction') -> None:
+                 mode: str = 'prediction',
+                 frames: Optional[torch.Tensor] = None) -> None:
         """
-        Pseudo-mouse dataset class for Allen Brain Observatory Visual coding calcium imaging data
+        Pseudo-mouse dataset class for Allen Brain Observatory Visual coding calcium imaging data,
+        recorded at the movie's own 30 fps (one timestep per frame, 900 frames).
 
         Parameters
         --------------------------------------
@@ -103,7 +126,7 @@ class AllenMoviesCaDataset(AllenMoviesDataset):
         :param frames: see AllenMoviesDataset
         """
 
-        super(AllenMoviesCaDataset, self).__init__(mode=mode)
+        super().__init__(frame_indices=torch.arange(900), mode=mode, frames=frames)
         datasets = import_optional('cebra.datasets', 'cebra')
 
         if train:

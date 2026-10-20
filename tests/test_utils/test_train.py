@@ -168,8 +168,6 @@ def test_train_on_batch_with_sequential_kl(make_model, spikes):
     assert changed(transition, before)
 
 
-@pytest.mark.xfail(reason="Known bug: update_and_reset zeroes the model's gradients but not the "
-                          "transition's, so they accumulate across steps")
 def test_sequential_kl_transition_gradients_are_cleared(make_model, spikes):
     model = make_model()
     groups, transition = build_param_groups(model, kl_type='sequential')
@@ -179,6 +177,21 @@ def test_sequential_kl_transition_gradients_are_cleared(make_model, spikes):
                    optimizer, beta=0.1, kl_type='sequential', transition=transition)
 
     assert all(param.grad is None or not param.grad.any() for param in transition.parameters())
+
+
+def test_sequential_kl_transition_updates_are_clipped(make_model, spikes):
+    model = make_model()
+    # No weight decay: SGD applies it after clipping, so it would add to the update.
+    groups, transition = build_param_groups(model, weight_decay=0., kl_type='sequential')
+    optimizer = torch.optim.SGD(groups, lr=1.)
+    before = snapshot(transition)
+
+    with pytest.warns(RuntimeWarning):  # the pre-clip norms are far above max_grad_norm
+        train_on_batch(model, spikes, torch.randn(BATCH, N_TIMESTEPS, OUTPUT_DIM), torch.nn.MSELoss(), optimizer,
+                       beta=1e3, kl_type='sequential', transition=transition, max_grad_norm=1e-3)
+
+    update = torch.cat([(param - old).flatten() for param, old in zip(transition.parameters(), before)])
+    assert update.norm().item() <= 1e-3 * (1 + 1e-4)
 
 
 def test_train_on_batch_and_record_grad_norm(make_model, spikes):

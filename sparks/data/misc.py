@@ -12,7 +12,7 @@ def normalize(x):
     elif isinstance(x, torch.Tensor):
         return (x - torch.min(x)) / (torch.max(x) - torch.min(x))
     else:
-        return NotImplementedError
+        raise TypeError(f"normalize expects a numpy array or a torch tensor, got {type(x).__name__}.")
 
 
 def smooth(x, window=10):
