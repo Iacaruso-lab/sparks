@@ -5,10 +5,12 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from sparks.models.attention.scan import parallel_affine_scan
-from sparks.models.blocks import PerceiverBlock
-from sparks.models.utils import FeedForward, DropPath, detach_state
-from sparks.models.controls.utils import ControlBlockBase, ema_correlation, tau_s_per_head
+from sparks.models.controls.base import ControlBlockBase, tau_s_per_head
+from sparks.models.controls.functional import ema_correlation
+from sparks.models.layers import DropPath, FeedForward
+from sparks.models.perceiver import PerceiverBlock
+from sparks.models.scan import parallel_affine_scan
+from sparks.models.utils import detach_state
 
 
 class CoefficientAttentionBlock(ControlBlockBase):

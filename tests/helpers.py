@@ -23,3 +23,13 @@ def perturb_parameters(model: torch.nn.Module, scale: float = 0.05) -> torch.nn.
     for param in model.parameters():
         param.add_(scale * torch.randn_like(param))
     return model
+
+
+def snapshot(model: torch.nn.Module) -> list:
+    """Copies of `model`'s parameters, to compare with after a training step."""
+    return [param.detach().clone() for param in model.parameters()]
+
+
+def changed(model: torch.nn.Module, before: list) -> bool:
+    """Whether any of `model`'s parameters differs from the `snapshot` taken before."""
+    return any(not torch.equal(param, old) for param, old in zip(model.parameters(), before))

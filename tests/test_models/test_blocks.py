@@ -1,7 +1,9 @@
 import pytest
 import torch
 
-from sparks.models.blocks import AttentionBlock, HebbianAttentionBlock, MambaBlock, PerceiverBlock
+from sparks.models.hebbian_block import HebbianAttentionBlock
+from sparks.models.layers import AttentionBlock, MambaBlock
+from sparks.models.perceiver import PerceiverBlock
 
 from helpers import BATCH, BOTTLENECK_DIM, EMBED_DIM, N_NEURONS, N_TIMESTEPS
 

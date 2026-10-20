@@ -35,7 +35,7 @@ SOFTWARE.
 
 ## neuralpredictors
 
-- Used in: `sparks/data/misc.py` (the dataloader cyclers, adapted from `neuralpredictors/training/cyclers.py`)
+- Used in: `sparks/training/cyclers.py` (adapted from `neuralpredictors/training/cyclers.py`)
 - Source: https://github.com/sinzlab/neuralpredictors
 
 ```

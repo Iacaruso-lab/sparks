@@ -1,8 +1,8 @@
 import pytest
 import torch
 
-from sparks.models.dataclasses import HebbianAttentionConfig
-from sparks.models.decoders import linear
+from sparks.models.configs import HebbianAttentionConfig
+from sparks.models.decoders import LinearDecoder
 
 from helpers import (BATCH, LATENT_DIM, N_NEURONS, N_TIMESTEPS, OUTPUT_DIM,
                      perturb_parameters)
@@ -112,7 +112,7 @@ def test_add_session_with_joint_decoder(make_model, spikes):
 
 
 def test_add_session_with_linear_decoder(make_model, spikes):
-    decoder = linear(in_dim=LATENT_DIM, output_dim_per_session=[OUTPUT_DIM], id_per_session=['a'])
+    decoder = LinearDecoder(in_dim=LATENT_DIM, output_dim_per_session=[OUTPUT_DIM], id_per_session=['a'])
     model = make_model(id_per_session=['a'], decoder=decoder)
 
     model.add_session(n_neurons=7, session_id='b', new_output_dim=6)

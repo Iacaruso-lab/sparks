@@ -5,10 +5,10 @@ import torch
 import torch.nn as nn
 
 
-from sparks.models.blocks import AttentionBlock
+from sparks.models.layers import AttentionBlock
 
 
-class mlp(nn.Module):
+class MLPDecoder(nn.Module):
     def __init__(self,
                  in_dim: int,
                  hidden_dims: int,
@@ -45,7 +45,7 @@ class mlp(nn.Module):
             None
         """
 
-        super(mlp, self).__init__()
+        super().__init__()
 
         self.joint_decoder = joint_decoder
 
@@ -84,7 +84,7 @@ class mlp(nn.Module):
             return self.out_layers[sess_id](x)
         
 
-class linear(nn.Module):
+class LinearDecoder(nn.Module):
     def __init__(self, in_dim: int,
                  output_dim_per_session: Any,
                  id_per_session: Any = None,
@@ -105,7 +105,7 @@ class linear(nn.Module):
             joint_decoder (bool): If True, uses a single output layer for all sessions. Default is False.
             zero_init (bool): If True, zeroes the output weights so the initial prediction is the
                 constant given by the bias below, independent of the latents. Default is True,
-                matching `mlp` (note this differs from the layer's previous behaviour, which left
+                matching `MLPDecoder` (note this differs from the layer's previous behaviour, which left
                 PyTorch's default initialisation in place).
             base_rate (float): Mean probability that a unit is active in one bin, used to set the
                 output bias to logit(base_rate) so that the initial prediction is that mean rather
@@ -116,7 +116,7 @@ class linear(nn.Module):
         Returns:
             None
         """
-        super(linear, self).__init__()
+        super().__init__()
 
         self.joint_decoder = joint_decoder
 
@@ -142,7 +142,7 @@ class linear(nn.Module):
             return self.out_layers[sess_id](x)
         
 
-class transformer(nn.Module):
+class TransformerDecoder(nn.Module):
     def __init__(self, 
                  embed_dim: int,
                  output_dim_per_session: Any,

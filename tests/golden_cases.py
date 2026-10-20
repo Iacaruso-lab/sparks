@@ -17,7 +17,7 @@ from pathlib import Path
 import torch
 
 from sparks.models import controls
-from sparks.models.dataclasses import ConvConfig, HebbianAttentionConfig
+from sparks.models.configs import HebbianAttentionConfig, SharedConfig
 from sparks.models.sparks import SPARKS
 
 GOLDEN_PATH = Path(__file__).parent / 'golden_outputs.pt'
@@ -25,7 +25,7 @@ N_TIMESTEPS = 12
 
 CASES = {
     'ephys_light': dict(),
-    'ephys_full_multi_head': dict(tau_p=3, tau_f=2, conv_config=ConvConfig(n_layers=1, n_heads=2),
+    'ephys_full_multi_head': dict(tau_p=3, tau_f=2, shared_config=SharedConfig(n_layers=1, n_heads=2),
                                   hebbian_config=HebbianAttentionConfig(config='full', tau_s=[0.5, 2.0], n_heads=2)),
     'calcium_light': dict(tau_p=2, hebbian_config=HebbianAttentionConfig(data_type='calcium')),
     'calcium_full_multi_head': dict(hebbian_config=HebbianAttentionConfig(data_type='calcium', config='full',

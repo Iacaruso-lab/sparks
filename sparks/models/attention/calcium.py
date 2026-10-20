@@ -6,7 +6,7 @@ from torch.nn import Parameter
 import torch.nn.functional as F
 
 from sparks.models.attention.base import DenseHebbianAttentionLayer
-from sparks.models.attention.scan import clamped_affine_scan
+from sparks.models.scan import clamped_affine_scan
 
 
 class CalciumAttentionLayer(DenseHebbianAttentionLayer):
@@ -178,7 +178,7 @@ class FullCalciumAttentionLayer(CalciumAttentionLayer):
     FullCalciumAttentionLayer class. Currently identical to the base CalciumAttentionLayer --
     the multi-timescale decay (see CalciumAttentionLayer._decay_init) is shared infrastructure,
     not per-neuron-pair capacity, so there is no full/light distinction left to add here. Kept
-    as its own class since `CONFIG_DICT` in blocks.py dispatches on it by name.
+    as its own class since `_ATTENTION_LAYERS` in hebbian_block.py dispatches on it by name.
     """
     pass
 

@@ -1,11 +1,8 @@
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from sparks.models.dataclasses import HebbianAttentionConfig
-# Aliased so that pytest doesn't collect the library's `test*` functions as tests
-from sparks.utils.test import get_hebbian_coeffs_on_batch
-from sparks.utils.test import test as evaluate
-from sparks.utils.test import test_on_batch as evaluate_on_batch
+from sparks.models.configs import HebbianAttentionConfig
+from sparks.training.evaluation import evaluate, evaluate_on_batch, get_hebbian_coeffs_on_batch
 
 from helpers import BATCH, LATENT_DIM, N_NEURONS, N_TIMESTEPS, OUTPUT_DIM, perturb_parameters
 
@@ -54,6 +51,16 @@ def test_evaluate_on_batch_future_window(make_model, spikes):
     torch.testing.assert_close(loss, loss_fn(decoder_outputs[:, :-1], future_targets))
 
 
+def test_evaluate_on_batch_burnin(make_model, spikes):
+    model = perturb_parameters(make_model())
+    targets = torch.randn(BATCH, N_TIMESTEPS, OUTPUT_DIM)
+    loss_fn = torch.nn.MSELoss()
+
+    loss, _, decoder_outputs = evaluate_on_batch(model, spikes, targets, loss_fn=loss_fn, burnin=3)
+
+    torch.testing.assert_close(loss, loss_fn(decoder_outputs[:, 3:], targets[:, 3:]))
+
+
 def test_chunked_evaluation_matches_unchunked(make_model, spikes):
     model = perturb_parameters(make_model(tau_p=3))
     targets = torch.randn(BATCH, N_TIMESTEPS, OUTPUT_DIM)
@@ -78,9 +85,9 @@ def test_evaluate_single_session(make_model):
 
     loss, encoder_outputs, decoder_outputs = evaluate(model, [dataloader], loss_fn=loss_fn)
 
-    # A single session returns tensors rather than one-element lists, with trials concatenated.
-    assert encoder_outputs.shape == (4, N_TIMESTEPS, LATENT_DIM)
-    assert decoder_outputs.shape == (4, N_TIMESTEPS, OUTPUT_DIM)
+    # One entry per session, with the session's trials concatenated.
+    assert [outputs.shape for outputs in encoder_outputs] == [(4, N_TIMESTEPS, LATENT_DIM)]
+    assert [outputs.shape for outputs in decoder_outputs] == [(4, N_TIMESTEPS, OUTPUT_DIM)]
     # The loss is summed over batches.
     expected_loss = sum(evaluate_on_batch(model, x, y, loss_fn=loss_fn)[0] for x, y in dataloader)
     torch.testing.assert_close(loss, expected_loss)

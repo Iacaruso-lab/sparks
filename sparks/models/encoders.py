@@ -3,14 +3,13 @@ from typing import List, Union, Optional, Tuple
 import torch
 import torch.nn as nn
 
-from sparks.models.dataclasses import HebbianAttentionConfig, ConvConfig
+from sparks.models.configs import HebbianAttentionConfig, SharedConfig
 
 
 class HebbianEncoder(nn.Module):
     """
-    Initialize a Hebbian Transformer Encoder.
-
-    This transformer encoder includes a Hebbian Attention Block, and optional conventional attention blocks.
+    The SPARKS encoder: a Hebbian attention block shared across sessions, optional shared
+    sequence blocks, and a projection to the mean and log-variance of the latents.
 
     Args:
         n_neurons_per_session (Union[int, List[int]]): Number of input neurons for one or more sessions.
@@ -18,9 +17,12 @@ class HebbianEncoder(nn.Module):
         latent_dim (int): The dimensionality of the latent space.
         id_per_session (Optional[List[Union[str, int]]]): Unique identifiers for each session.
                                                     If None, defaults to `[0, 1, ..., N-1]`.
-        hebbian_config (HebbianConfig): Configuration for the Hebbian attention block.
-        attention_config (AttentionConfig): Configuration for conventional attention layers.
-        device (torch.device): The device for computations.
+        hebbian_config (HebbianAttentionConfig, optional): Configuration for the Hebbian
+            attention block. Default is None (HebbianAttentionConfig()).
+        shared_config (SharedConfig, optional): Configuration for the shared sequence blocks
+            between the Hebbian attention block and the latent projection. Default is None
+            (SharedConfig(), i.e. no shared blocks).
+        device (torch.device): The device to create the encoder on.
 
     Returns:
         None
@@ -40,16 +42,13 @@ class HebbianEncoder(nn.Module):
                  latent_dim: int,
                  bottleneck_dim: int,
                  id_per_session: Optional[List[Union[str, int]]] = None,
-                 hebbian_config: Union[HebbianAttentionConfig, List[HebbianAttentionConfig]] = HebbianAttentionConfig(),
-                 conv_config: ConvConfig = ConvConfig(),
+                 hebbian_config: Optional[HebbianAttentionConfig] = None,
+                 shared_config: Optional[SharedConfig] = None,
                  device: torch.device = torch.device('cpu')):
         super().__init__()
 
-        # The Hebbian attention block is now a single instance shared across every session (see
-        # add_neural_block), so only one HebbianAttentionConfig applies at construction time --
-        # a list is accepted for call-signature compatibility, but only its first element is used.
-        if isinstance(hebbian_config, list):
-            hebbian_config = hebbian_config[0]
+        hebbian_config = hebbian_config if hebbian_config is not None else HebbianAttentionConfig()
+        shared_config = shared_config if shared_config is not None else SharedConfig()
 
         if isinstance(n_neurons_per_session, int):
             n_neurons_per_session = [n_neurons_per_session]
@@ -62,7 +61,6 @@ class HebbianEncoder(nn.Module):
         self.embed_dim = embed_dim
         self.latent_dim = latent_dim
         self.bottleneck_dim = bottleneck_dim
-        self.device = device
 
         # Hebbian Attention Block (shared across sessions): each session contributes its own
         # Hebbian attention layer(s), sized to that session's own n_neurons, while the
@@ -75,10 +73,11 @@ class HebbianEncoder(nn.Module):
             **hebbian_config.params
         )
 
-        # Conventional Blocks (Shared)
+        # Shared blocks. The attribute keeps its original name so that saved
+        # checkpoints still load.
         self.conventional_blocks = nn.Sequential(*[
-            conv_config.block_class(d_model=embed_dim * bottleneck_dim, **conv_config.params)
-            for _ in range(conv_config.n_layers)
+            shared_config.block_class(d_model=embed_dim * bottleneck_dim, **shared_config.params)
+            for _ in range(shared_config.n_layers)
         ])
 
         # The Hebbian block and every conventional block are pre-norm (each sub-layer normalizes
@@ -90,8 +89,13 @@ class HebbianEncoder(nn.Module):
         self.pre_projection_norm = nn.LayerNorm(embed_dim * bottleneck_dim)
 
         self.projection_head = self._create_projection_head()
-    
+
         self.to(device)
+
+    @property
+    def device(self) -> torch.device:
+        """The device the model's parameters are on (follows `.to()`)."""
+        return next(self.parameters()).device
 
     def _create_projection_head(self) -> nn.Module:
         """Factory method to build the projection head."""

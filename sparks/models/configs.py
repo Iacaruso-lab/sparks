@@ -2,7 +2,8 @@ from dataclasses import dataclass, field
 from typing import List, Type, Union, Dict, Any
 from torch import nn
 
-from sparks.models.blocks import HebbianAttentionBlock, AttentionBlock
+from sparks.models.hebbian_block import HebbianAttentionBlock
+from sparks.models.layers import AttentionBlock
 
 
 @dataclass
@@ -57,8 +58,12 @@ class HebbianAttentionConfig:
 
 
 @dataclass
-class ConvConfig:
-    """Configuration for the Conventional Blocks."""
+class SharedConfig:
+    """
+    Configuration for the shared blocks: the stack of sequence blocks, shared by every session,
+    between the Hebbian attention block and the latent projection (attention blocks by default,
+    or e.g. MambaBlock). There are none by default.
+    """
     block_class: Type[nn.Module] = AttentionBlock
     n_layers: int = 0
 
@@ -77,7 +82,7 @@ class ConvConfig:
     def __post_init__(self):
         """
         After initialization, merge all configuration parameters into the params dictionary.
-        This ensures that all parameters are available when passed to the HebbianAttentionBlock.
+        This ensures that all parameters are available when passed to each shared block.
         """
         # Get all fields except block_class and params itself
         config_params = {

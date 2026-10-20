@@ -2,7 +2,7 @@ import pytest
 import torch
 
 from sparks.models import controls
-from sparks.models.dataclasses import HebbianAttentionConfig
+from sparks.models.configs import HebbianAttentionConfig
 
 from helpers import BATCH, LATENT_DIM, N_TIMESTEPS, OUTPUT_DIM, perturb_parameters
 

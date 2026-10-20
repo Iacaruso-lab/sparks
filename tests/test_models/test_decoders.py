@@ -4,7 +4,7 @@ import numpy as np
 
 def test_mlp_decoder():
     """Test MLP decoder"""
-    from sparks.models.decoders import mlp
+    from sparks.models.decoders import MLPDecoder
 
     in_dim = 128
     hidden_dims = [64, 32]
@@ -12,7 +12,7 @@ def test_mlp_decoder():
     id_per_sess = np.array([0, 1])
     batch_size = 16
 
-    decoder = mlp(
+    decoder = MLPDecoder(
         in_dim=in_dim,
         hidden_dims=hidden_dims,
         output_dim_per_session=output_dim_per_session,
@@ -31,14 +31,14 @@ def test_mlp_decoder():
 
 def test_linear_decoder():
     """Test linear decoder"""
-    from sparks.models.decoders import linear
+    from sparks.models.decoders import LinearDecoder
 
     in_dim = 64
     output_dim_per_session = [5, 10]
     id_per_sess = [0, 1]
     batch_size = 8
 
-    decoder = linear(
+    decoder = LinearDecoder(
         in_dim=in_dim,
         output_dim_per_session=output_dim_per_session,
         id_per_session=id_per_sess
@@ -54,9 +54,9 @@ def test_linear_decoder():
 
 
 def test_joint_mlp_decoder_shares_one_head():
-    from sparks.models.decoders import mlp
+    from sparks.models.decoders import MLPDecoder
 
-    decoder = mlp(in_dim=16, hidden_dims=[8], output_dim_per_session=5, joint_decoder=True)
+    decoder = MLPDecoder(in_dim=16, hidden_dims=[8], output_dim_per_session=5, joint_decoder=True)
     x = torch.randn(4, 16)
 
     assert decoder(x, sess_id=0).shape == decoder(x, sess_id=1).shape == (4, 5)
@@ -65,9 +65,9 @@ def test_joint_mlp_decoder_shares_one_head():
 def test_mlp_decoder_starts_at_base_rate():
     """The output layer is zero-initialized with its bias at logit(base_rate), so every
     prediction starts at the base rate after a sigmoid, whatever the input."""
-    from sparks.models.decoders import mlp
+    from sparks.models.decoders import MLPDecoder
 
-    decoder = mlp(in_dim=16, hidden_dims=[8], output_dim_per_session=[5], base_rate=0.1)
+    decoder = MLPDecoder(in_dim=16, hidden_dims=[8], output_dim_per_session=[5], base_rate=0.1)
 
     probs = torch.sigmoid(decoder(torch.randn(4, 16), sess_id=0))
 
@@ -75,9 +75,9 @@ def test_mlp_decoder_starts_at_base_rate():
 
 
 def test_transformer_decoder():
-    from sparks.models.decoders import transformer
+    from sparks.models.decoders import TransformerDecoder
 
-    decoder = transformer(embed_dim=8, output_dim_per_session=[5, 6], n_heads=2, id_per_session=[0, 1])
+    decoder = TransformerDecoder(embed_dim=8, output_dim_per_session=[5, 6], n_heads=2, id_per_session=[0, 1])
     x = torch.randn(4, 12, 8)
 
     assert decoder(x, sess_id=0).shape == (4, 12, 5)
@@ -85,8 +85,8 @@ def test_transformer_decoder():
 
 
 def test_transformer_decoder_default_session_ids():
-    from sparks.models.decoders import transformer
+    from sparks.models.decoders import TransformerDecoder
 
-    decoder = transformer(embed_dim=8, output_dim_per_session=[5, 6])
+    decoder = TransformerDecoder(embed_dim=8, output_dim_per_session=[5, 6])
 
     assert decoder(torch.randn(4, 12, 8), sess_id=1).shape == (4, 12, 6)

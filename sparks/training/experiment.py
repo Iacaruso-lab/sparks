@@ -56,10 +56,6 @@ def make_res_folder(name: str, path_to_res: str, args: argparse.Namespace):
         args.device = torch.device('cpu')
 
 
-def identity(x):
-    return x
-
-
 class EarlyStopper:
     def __init__(self, patience=1, min_delta=0):
         self.patience = patience

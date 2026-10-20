@@ -4,104 +4,21 @@ import pytest
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from sparks.utils.losses import GaussianTransition, kl_divergence
-from sparks.utils.train import (build_param_groups, get_lr_multiplier, measure_grad_norm, per_module_clip_groups,
-                                train, train_on_batch, train_on_batch_and_record_grad_norm, update_and_reset)
+from sparks.training.losses import kl_divergence
+from sparks.training.optim import build_param_groups
+from sparks.training.training_loop import stack_future_targets, train, train_on_batch
 
-from helpers import BATCH, N_NEURONS, N_TIMESTEPS, OUTPUT_DIM, perturb_parameters
-
-
-def snapshot(model):
-    return [param.detach().clone() for param in model.parameters()]
+from helpers import BATCH, N_NEURONS, N_TIMESTEPS, OUTPUT_DIM, changed, perturb_parameters, snapshot
 
 
-def changed(model, before):
-    return any(not torch.equal(param, old) for param, old in zip(model.parameters(), before))
+def test_stack_future_targets():
+    targets = torch.arange(8.).reshape(1, 4, 2)  # 4 timesteps, 2 features
 
+    stacked = stack_future_targets(targets, tau_f=2)
 
-def test_lr_multiplier_warmup_then_cosine_decay():
-    assert get_lr_multiplier(0, warmup_steps=10, total_steps=110) == 0.
-    assert get_lr_multiplier(5, warmup_steps=10, total_steps=110) == 0.5
-    assert get_lr_multiplier(10, warmup_steps=10, total_steps=110) == 1.
-    assert get_lr_multiplier(60, warmup_steps=10, total_steps=110) == pytest.approx(0.5)
-    assert get_lr_multiplier(110, warmup_steps=10, total_steps=110) == pytest.approx(0.)
-    assert get_lr_multiplier(110, warmup_steps=10, total_steps=110, min_lr=0.1) == 0.1
-
-
-def test_param_groups_partition_the_model(make_model):
-    model = make_model()
-
-    (decay, no_decay), transition = build_param_groups(model, weight_decay=0.1)
-
-    assert transition is None
-    assert decay['weight_decay'] == 0.1 and no_decay['weight_decay'] == 0.
-    grouped = [id(p) for p in decay['params'] + no_decay['params']]
-    assert sorted(grouped) == sorted(id(p) for p in model.parameters() if p.requires_grad)
-    # Biases, norms and embedding-like parameters are not decayed; dense weight matrices are.
-    no_decay_ids = {id(p) for p in no_decay['params']}
-    for name, param in model.named_parameters():
-        if param.ndim < 2 or any(key in name for key in ('norm', 'bias', 'neuron_identity', 'latents')):
-            assert id(param) in no_decay_ids, name
-    assert all(param.ndim >= 2 for param in decay['params'])
-
-
-def test_param_groups_include_sequential_kl_transition(make_model):
-    model = make_model()
-
-    groups, transition = build_param_groups(model, kl_type='sequential')
-
-    assert isinstance(transition, GaussianTransition)
-    grouped = {id(p) for group in groups for p in group['params']}
-    assert all(id(p) in grouped for p in transition.parameters())
-
-
-def test_param_groups_reject_unknown_kl_type(make_model):
-    with pytest.raises(ValueError):
-        build_param_groups(make_model(), kl_type='unknown')
-
-
-def test_clip_groups_cover_every_parameter_once(make_model):
-    model = make_model()
-
-    grouped = [id(p) for _, params in per_module_clip_groups(model) for p in params]
-
-    assert sorted(grouped) == sorted(id(p) for p in model.parameters() if p.requires_grad)
-
-
-def test_measure_grad_norm(make_model, spikes):
-    model = perturb_parameters(make_model())
-    model(spikes, session_id=0)[1].pow(2).mean().backward()
-
-    norms = measure_grad_norm(model)
-
-    per_param = [value for name, value in norms.items() if name != 'total']
-    assert norms['total'] == pytest.approx(math.sqrt(sum(value ** 2 for value in per_param)))
-
-
-def test_update_and_reset_steps_and_clears_gradients(make_model, spikes):
-    model = perturb_parameters(make_model())
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
-    before = snapshot(model)
-
-    grad_norm = update_and_reset(model, model(spikes, session_id=0)[1].pow(2).mean(), optimizer)
-
-    assert grad_norm > 0
-    assert changed(model, before)
-    assert all(param.grad is None for param in model.parameters())
-
-
-def test_update_and_reset_clips_the_update(make_model, spikes):
-    """With one joint clip and plain SGD at lr=1, the update's norm is exactly max_val."""
-    model = perturb_parameters(make_model())
-    optimizer = torch.optim.SGD(model.parameters(), lr=1.)
-    before = snapshot(model)
-    loss = 1e3 * model(spikes, session_id=0)[1].pow(2).mean()
-
-    with pytest.warns(RuntimeWarning):  # the pre-clip norm is far above max_val
-        update_and_reset(model, loss, optimizer, max_val=1e-3)
-
-    update = torch.cat([(param - old).flatten() for param, old in zip(model.parameters(), before)])
-    assert update.norm().item() == pytest.approx(1e-3, rel=1e-3)
+    assert stacked.shape == (1, 3, 4)
+    assert stacked[0, 0].tolist() == [0., 1., 2., 3.]  # timestep 0's features, then timestep 1's
+    assert torch.equal(stack_future_targets(targets, tau_f=1), targets)
 
 
 def test_train_on_batch_loss(make_model, spikes):
@@ -194,15 +111,27 @@ def test_sequential_kl_transition_updates_are_clipped(make_model, spikes):
     assert update.norm().item() <= 1e-3 * (1 + 1e-4)
 
 
-def test_train_on_batch_and_record_grad_norm(make_model, spikes):
+def test_train_on_batch_returns_gradient_norms(make_model, spikes):
+    model = make_model()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+    targets = torch.randn(BATCH, N_TIMESTEPS, OUTPUT_DIM)
+
+    loss, norms = train_on_batch(model, spikes, targets, torch.nn.MSELoss(), optimizer, return_grad_norms=True)
+    losses, chunk_norms = train_on_batch(model, spikes, targets, torch.nn.MSELoss(), optimizer, chunk_length=8,
+                                         return_grad_norms=True)
+
+    assert isinstance(loss, float) and 'total' in norms
+    assert len(losses) == len(chunk_norms) == 2
+
+
+def test_train_on_batch_rejects_unknown_arguments(make_model, spikes):
+    """Options are explicit keyword arguments, so a misspelled one fails instead of being ignored."""
     model = make_model()
     optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
 
-    loss, norms = train_on_batch_and_record_grad_norm(model, spikes, torch.randn(BATCH, N_TIMESTEPS, OUTPUT_DIM),
-                                                      torch.nn.MSELoss(), optimizer)
-
-    assert isinstance(loss, float)
-    assert 'total' in norms
+    with pytest.raises(TypeError):
+        train_on_batch(model, spikes, torch.randn(BATCH, N_TIMESTEPS, OUTPUT_DIM), torch.nn.MSELoss(), optimizer,
+                       burn_in=2)
 
 
 class CountingScheduler:

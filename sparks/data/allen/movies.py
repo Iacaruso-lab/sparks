@@ -34,7 +34,7 @@ class AllenMoviesDataset(BaseDataset):
 
         Each __getitem__ call returns the whole recording -- to process a long recording in
         consecutive chunks (e.g. for a stateful encoder), slice the returned (spikes, target)
-        tensors yourself; see sparks.utils.train's chunked training helpers.
+        tensors yourself; see the `chunk_length` argument of sparks.training.train_on_batch.
         """
 
         super().__init__()

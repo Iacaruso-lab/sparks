@@ -3,8 +3,8 @@ from typing import Dict, Optional, Sequence, Union
 import torch
 from torch import nn
 
-from sparks.models.blocks import AttentionBlock
-from sparks.models.controls.utils import EMAControlBlockBase
+from sparks.models.controls.base import EMAControlBlockBase
+from sparks.models.layers import AttentionBlock
 
 
 class MLPControlBlock(EMAControlBlockBase):

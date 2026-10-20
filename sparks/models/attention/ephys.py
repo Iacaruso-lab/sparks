@@ -5,7 +5,7 @@ from torch.nn import Parameter
 import torch.nn.functional as F
 
 from sparks.models.attention.base import DenseHebbianAttentionLayer
-from sparks.models.attention.scan import parallel_affine_scan, clamped_affine_scan
+from sparks.models.scan import parallel_affine_scan, clamped_affine_scan
 
 
 class EphysAttentionLayer(DenseHebbianAttentionLayer):

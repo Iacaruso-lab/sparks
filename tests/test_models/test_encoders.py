@@ -5,7 +5,7 @@ import torch
 def test_hebbian_encoder():
     """Test HebbianEncoder"""
     from sparks.models.encoders import HebbianEncoder
-    from sparks.models.dataclasses import HebbianAttentionConfig
+    from sparks.models.configs import HebbianAttentionConfig
 
     n_neurons_per_sess = [100, 150]
     embed_dim = 64

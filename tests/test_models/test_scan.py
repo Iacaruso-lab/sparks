@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from sparks.models.attention.scan import clamped_affine_scan, parallel_affine_scan
+from sparks.models.scan import clamped_affine_scan, parallel_affine_scan
 
 
 def sequential_affine_scan(a, b, x_init=None, min_val=-float('inf'), max_val=float('inf')):

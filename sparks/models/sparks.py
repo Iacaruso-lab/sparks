@@ -2,9 +2,9 @@ from typing import Union, List, Optional, Tuple
 import torch
 import torch.nn.functional as F
 
+from sparks.models.configs import HebbianAttentionConfig, SharedConfig
+from sparks.models.decoders import MLPDecoder
 from sparks.models.encoders import HebbianEncoder
-from sparks.models.dataclasses import HebbianAttentionConfig, ConvConfig
-from sparks.models.decoders import mlp
 
 
 class SPARKS(torch.nn.Module):
@@ -23,8 +23,8 @@ class SPARKS(torch.nn.Module):
                  tau_p: int = 1,
                  tau_f: Optional[int] = 1,
                  id_per_session: Optional[List[Union[str, int]]] = None,
-                 hebbian_config: Union[HebbianAttentionConfig, List[HebbianAttentionConfig]] = HebbianAttentionConfig(),
-                 conv_config: ConvConfig = ConvConfig(),
+                 hebbian_config: Optional[HebbianAttentionConfig] = None,
+                 shared_config: Optional[SharedConfig] = None,
                  decoder: Optional[torch.nn.Module] = None,
                  output_dim_per_session: Optional[Union[int, List[int]]] = None,
                  joint_decoder: bool = False,
@@ -37,7 +37,6 @@ class SPARKS(torch.nn.Module):
         self.latent_dim = latent_dim
         self.embed_dim = embed_dim
         self.bottleneck_dim = bottleneck_dim
-        self.device = device
         self._carried_z_tail = {}  # session_id (str) -> last (tau_p - 1) latents, for pad_z
 
         if isinstance(n_neurons_per_session, int):
@@ -54,8 +53,7 @@ class SPARKS(torch.nn.Module):
                                       bottleneck_dim=bottleneck_dim,
                                       id_per_session=id_per_session,
                                       hebbian_config=hebbian_config,
-                                      conv_config=conv_config,
-                                      device=device)
+                                      shared_config=shared_config)
         
         if decoder is None:
             if output_dim_per_session is None:
@@ -73,11 +71,17 @@ class SPARKS(torch.nn.Module):
 
             n_inputs_decoder = latent_dim * tau_p
             hid_dims = [4 * n_inputs_decoder]
-            decoder = mlp(in_dim=n_inputs_decoder, hidden_dims=hid_dims,
-                          output_dim_per_session=output_dim_per_session,
-                          id_per_session=id_per_session, joint_decoder=joint_decoder).to(device)
+            decoder = MLPDecoder(in_dim=n_inputs_decoder, hidden_dims=hid_dims,
+                                 output_dim_per_session=output_dim_per_session,
+                                 id_per_session=id_per_session, joint_decoder=joint_decoder)
 
         self.decoder = decoder
+        self.to(device)
+
+    @property
+    def device(self) -> torch.device:
+        """The device the model's parameters are on (follows `.to()`)."""
+        return next(self.parameters()).device
 
     def forward(self, x: torch.Tensor, session_id: Union[str, int],
                carry_state: bool = False) -> Tuple[torch.Tensor, torch.Tensor,
@@ -212,7 +216,7 @@ class SPARKS(torch.nn.Module):
                 state left by the previous carrying call instead of starting from zero, so that a
                 recording too long to hold a [B, T, N, N] coefficient tensor for can be extracted
                 in consecutive chunks with continuous dynamics (see
-                `sparks.utils.test.get_hebbian_coeffs_on_batch`). Call `reset_state(session_id)`
+                `sparks.training.evaluation.get_hebbian_coeffs_on_batch`). Call `reset_state(session_id)`
                 before the first chunk. Default is False.
         Returns:
             torch.Tensor: The stdp coefficients tensor from the Hebbian attention block.
@@ -254,7 +258,7 @@ class SPARKS(torch.nn.Module):
         if has_session_heads:
             # Read the width the new head needs off an existing one, rather than off the decoder's
             # hidden stack: every decoder in sparks.models.decoders owns `out_layers`, but only
-            # `mlp` has a `layers` attribute.
+            # `MLPDecoder` has a `layers` attribute.
             in_features = next(iter(self.decoder.out_layers.values())).in_features
             self.decoder.out_layers[str(session_id)] = torch.nn.Linear(in_features,
                                                                        new_output_dim * self.tau_f).to(self.device)
