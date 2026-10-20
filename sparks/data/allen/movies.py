@@ -1,16 +1,13 @@
-from typing import Optional
 
 import numpy as np
 import torch
 
 from sparks._optional import import_optional
-from sparks.data.allen.utils import make_spike_histogram, get_frame_indices_per_timestep
+from sparks.data.allen.utils import make_spike_histogram
 from sparks.data.base import BaseDataset
 
 
 class AllenMoviesDataset(BaseDataset):
-    time_axis = 0
-
     def __init__(self,
                  mode: str = 'prediction') -> None:
         """
@@ -41,9 +38,6 @@ class AllenMoviesDataset(BaseDataset):
     def get_full_spikes(self, idx):
         raise NotImplementedError
 
-    def get_full_length(self):
-        raise NotImplementedError
-
     def get_spikes(self, idx):
         return self.get_full_spikes(idx)
 
@@ -60,8 +54,6 @@ class AllenMoviesDataset(BaseDataset):
 
 
 class AllenMoviesNpxDataset(AllenMoviesDataset):
-    time_axis = 0
-
     def __init__(self,
                  spikes: dict,
                  good_units_ids: np.ndarray,
@@ -89,9 +81,6 @@ class AllenMoviesNpxDataset(AllenMoviesDataset):
     def __len__(self):
         return len(self.spikes[self.good_units_ids[0]])
 
-    def get_full_length(self):
-        return len(self.time_bin_edges) - 1
-
     def get_full_spikes(self, idx):
         """
         Get all spikes for a given presentation of the movie
@@ -100,8 +89,6 @@ class AllenMoviesNpxDataset(AllenMoviesDataset):
 
 
 class AllenMoviesCaDataset(AllenMoviesDataset):
-    time_axis = 1
-
     def __init__(self,
                  n_neurons: int = 10,
                  seed: int = 111,
@@ -128,9 +115,6 @@ class AllenMoviesCaDataset(AllenMoviesDataset):
 
     def __len__(self):
         return len(self.spikes)
-
-    def get_full_length(self):
-        return self.spikes.shape[-1]
 
     def get_full_spikes(self, idx):
         return self.spikes[idx]

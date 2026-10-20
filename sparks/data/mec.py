@@ -1,10 +1,7 @@
-from typing import Any
 
 import numpy as np
 import torch
 from scipy.io import loadmat
-from scipy.signal import convolve, correlate, correlation_lags
-from scipy.stats import norm
 
 from sparks.data.base import BaseDataset
 
@@ -18,47 +15,6 @@ def spikes_downsample(spikes, downsampling_factor, mode='mean'):
     elif mode == 'max':
         return np.vstack([(np.histogram(spike_times_unit[spike_times_unit != 0], bins)[0] > 0)[None, :]
                            for spike_times_unit in spike_times]).astype(float)
-
-
-def fire_rate(calcium_activity, bin_size):
-    # Define the Gaussian kernel
-    kernel_width = 4 * bin_size
-    x = np.linspace(-kernel_width, kernel_width, num=2*kernel_width, endpoint=False)
-    gaussian_kernel = norm.pdf(x, scale=kernel_width)
-
-    # Normalize the kernel
-    gaussian_kernel /= np.sum(gaussian_kernel)
-
-    # Convolve the calcium activity with the Gaussian kernel
-    smoothed_activity = convolve(calcium_activity, gaussian_kernel, mode='same')
-
-    return smoothed_activity
-
-
-def sorting_xcorr(spikes, maxlag, downsampling_factor, dt_sf):
-    FRp = spikes_downsample(spikes, downsampling_factor)
-
-    FR = np.vstack([fire_rate(FRp[i], dt_sf) for i in range(len(FRp))])
-    corr_mat = np.zeros([spikes.shape[0], spikes.shape[0]])
-
-    for i in range(FR.shape[0]):
-        for j in range(i + 1, FR.shape[0]):
-            val = correlate(FR[i], FR[j], mode='full')
-            time = correlation_lags(len(FR[i]), len(FR[j]), mode='full')
-
-            idx = np.argmax(val[np.abs(time) < maxlag])
-            v = val[np.abs(time) < maxlag][idx]
-            t = time[np.abs(time) < maxlag][idx]
-
-            if t >= 0:
-                corr_mat[i, j] = v
-                corr_mat[j, i] = -v
-            else:
-                corr_mat[i, j] = -v
-                corr_mat[j, i] = v
-
-    r, c = np.unravel_index(np.argmax(corr_mat), corr_mat.shape)
-    return np.argsort(corr_mat[c])
 
 
 def make_mec_ca_dataset(spikes_file,

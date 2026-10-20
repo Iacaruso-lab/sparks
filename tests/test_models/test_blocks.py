@@ -63,6 +63,8 @@ def test_add_hebbian_layer_rejects_different_head_count():
 def test_invalid_attention_variant_raises():
     with pytest.raises(ValueError):
         make_block(data_type='not-a-data-type')
+    with pytest.raises(ValueError):  # the sliding-window variant was removed in 0.3.0
+        make_block(config='sparse')
     with pytest.raises(ValueError):
         make_block(config='not-a-config')
 

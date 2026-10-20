@@ -8,18 +8,6 @@ import torch
 from sparks.data.misc import LongCycler
 from sparks.utils.losses import kl_divergence, GaussianTransition
 from sparks.models.sparks import SPARKS
-from sparks.models.transformer import HebbianTransformer
-
-
-def lr_warmup(current_step, warmup_steps):
-    """
-    Returns a multiplier from 0.0 to 1.0 that modifies the peak learning rate.
-    """
-    # Phase 1: Linear Warmup (from 0 to 1)
-    if current_step < warmup_steps:
-        return float(current_step) / float(max(1, warmup_steps))
-    else:
-        return 1.0
 
 
 def get_lr_multiplier(current_step, warmup_steps, total_steps, min_lr=0.0):
@@ -34,22 +22,6 @@ def get_lr_multiplier(current_step, warmup_steps, total_steps, min_lr=0.0):
     progress = float(current_step - warmup_steps) / float(max(1, total_steps - warmup_steps))
     
     return max(min_lr, 0.5 * (1.0 + math.cos(math.pi * progress)))
-
-
-def get_lr_decay(current_step, warmup_steps, total_steps):
-    """
-    Returns a multiplier from 0.0 to 1.0 that modifies the peak learning rate.
-    """
-    # Phase 1: Linear Warmup (from 0 to 1)
-    if current_step < warmup_steps:
-        return 1.
-    
-    # Phase 2: Cosine Decay (from 1 down to 0)
-    progress = float(current_step - warmup_steps) / float(max(1, total_steps - warmup_steps))
-    
-    # math.cos returns values between 1 and -1. 
-    # This formula scales it to be strictly between 1.0 and 0.0.
-    return 0.5 * (1.0 + math.cos(math.pi * progress))
 
 
 def build_param_groups(model: torch.nn.Module, weight_decay: float = 0.1,
@@ -166,7 +138,7 @@ def per_module_clip_groups(model: torch.nn.Module) -> List[Tuple[str, List[torch
     return groups
 
 
-def update_and_reset(model: Union[SPARKS, HebbianTransformer],
+def update_and_reset(model: SPARKS,
                      loss: Any,
                      optimizer: torch.optim.Optimizer,
                      max_val: float = 5.,
@@ -177,7 +149,7 @@ def update_and_reset(model: Union[SPARKS, HebbianTransformer],
     and then resets the gradients. This function is typically called after every batch during training.
 
     Args:
-        model (Union[SPARKS, HebbianTransformer]): The model instance.
+        model (SPARKS): The model instance.
         loss (torch.Tensor): The computed loss for the current batch of data.
         optimizer (torch.optim.Optimizer): The optimizer algorithm used to update the model's parameters.
         max_val (float, optional): The maximum L2 norm for gradient clipping. Default is 1.
@@ -236,7 +208,7 @@ def update_and_reset(model: Union[SPARKS, HebbianTransformer],
     return grad_norm
 
 
-def train_on_batch(model: Union[SPARKS, HebbianTransformer],
+def train_on_batch(model: SPARKS,
                    inputs: torch.tensor,
                    targets: torch.tensor,
                    loss_fn: Any,
@@ -247,7 +219,7 @@ def train_on_batch(model: Union[SPARKS, HebbianTransformer],
     Trains the model on a batch of inputs.
 
     Args:
-        model (Union[SPARKS, HebbianTransformer]): The model instance.
+        model (SPARKS): The model instance.
         inputs (torch.tensor): The input data for the batch of training.
         targets (torch.tensor): The target data for the batch of training.
         loss_fn (Any): The loss function used to evaluate the model's predictions.
@@ -282,8 +254,8 @@ def train_on_batch(model: Union[SPARKS, HebbianTransformer],
             - chunk_length (int): If given, walks through `inputs`/`targets` in consecutive,
                 non-overlapping chunks of this many timesteps instead of one forward/backward
                 pass over the whole sequence, carrying the model's recurrent state (the Hebbian
-                attention layer's STDP/trace state, the Perceiver's linear-attention state if
-                enabled, and the decoder's sliding-window tail if tau_p > 1) across chunk
+                attention layer's STDP/trace state, the Perceiver's linear-attention state,
+                and the decoder's sliding-window tail if tau_p > 1) across chunk
                 boundaries via `carry_state=True` -- see `SPARKS.forward`. Without this, every
                 chunk would look like the true start of the recording (state reset to zero /
                 zero-padded), which is wrong for anything but the first chunk. State is detached
@@ -295,9 +267,8 @@ def train_on_batch(model: Union[SPARKS, HebbianTransformer],
                 function once per trial/recording, not once per chunk. `burnin` (if given) is
                 only applied within the first chunk, since later chunks continue from an
                 already-warmed-up state and discarding their first `burnin` steps too would throw
-                away real, usable loss signal for no reason. Only supported for SPARKS models
-                (which implement `reset_state`/`carry_state`), not HebbianTransformer. Default is
-                None (single pass over the whole sequence, as before).
+                away real, usable loss signal for no reason. Default is None (single pass over
+                the whole sequence).
 
     Returns:
         loss.item() (float) if `chunk_length` is None (unchanged from before), or a
@@ -370,7 +341,7 @@ def train_on_batch(model: Union[SPARKS, HebbianTransformer],
     return losses
 
 
-def train_on_batch_and_record_grad_norm(model: Union[SPARKS, HebbianTransformer],
+def train_on_batch_and_record_grad_norm(model: SPARKS,
                                         inputs: torch.tensor,
                                         targets: torch.tensor,
                                         loss_fn: Any,
@@ -381,7 +352,7 @@ def train_on_batch_and_record_grad_norm(model: Union[SPARKS, HebbianTransformer]
     Trains the model on a batch of inputs.
 
     Args:
-        model (Union[SPARKS, HebbianTransformer]): The model instance.
+        model (SPARKS): The model instance.
         inputs (torch.tensor): The input data for the batch of training.
         targets (torch.tensor): The target data for the batch of training.
         loss_fn (Any): The loss function used to evaluate the model's predictions.
@@ -487,7 +458,7 @@ def train_on_batch_and_record_grad_norm(model: Union[SPARKS, HebbianTransformer]
     return loss.item(), grad_norm_meas
 
 
-def train(model: Union[SPARKS, HebbianTransformer],
+def train(model: SPARKS,
           train_dls: List,
           loss_fn: Any,
           optimizer: torch.optim.Optimizer,
@@ -496,7 +467,7 @@ def train(model: Union[SPARKS, HebbianTransformer],
     Trains the model on a batch of inputs.
 
     Args:
-        model (Union[SPARKS, HebbianTransformer]): The model instance.
+        model (SPARKS): The model instance.
         train_dls (List): List of Dataloaders to train on, typically one per session.
         loss_fn (Any): The loss function used to evaluate the model's predictions.
         optimizer (torch.optim.Optimizer): The optimizer algorithm used to update the model's parameters.

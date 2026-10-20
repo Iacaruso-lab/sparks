@@ -1,13 +1,11 @@
-from typing import Any, List, Union, Optional
+from typing import Any
 
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 from sparks.models.blocks import AttentionBlock
-from sparks.models.utils import FeedForward, DropPath
 
 
 class mlp(nn.Module):

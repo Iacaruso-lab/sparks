@@ -3,13 +3,10 @@ import fnmatch
 import json
 import os
 import time
-from typing import List, Union
 
 import numpy as np
 import torch
 
-from sparks.models.sparks import SPARKS
-from sparks.models.transformer import HebbianTransformer
 
 
 def make_res_folder(name: str, path_to_res: str, args: argparse.Namespace):

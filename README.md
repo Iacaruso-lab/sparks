@@ -34,7 +34,6 @@ Make sure to 👀 watch or ⭐️ star this repository to keep updated!
 - More flexible definition of configurations for different Hebbian attention layers
 - Softly bounded STDP provides much more stable results for long recordings
 - New demo notebook for training a single model with several recordings
-- Beta: sliding-window attention to scale the model for modern large recordings
 
 # Reference
 - 📄 **Preprint**:

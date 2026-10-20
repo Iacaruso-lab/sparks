@@ -3,8 +3,7 @@ from typing import List, Union, Optional, Tuple
 import torch
 import torch.nn as nn
 
-from sparks.models.dataclasses import HebbianAttentionConfig, ConvConfig, ProjectionConfig
-from sparks.models.blocks import AttentionBlock
+from sparks.models.dataclasses import HebbianAttentionConfig, ConvConfig
 
 
 class HebbianEncoder(nn.Module):
@@ -21,7 +20,6 @@ class HebbianEncoder(nn.Module):
                                                     If None, defaults to `[0, 1, ..., N-1]`.
         hebbian_config (HebbianConfig): Configuration for the Hebbian attention block.
         attention_config (AttentionConfig): Configuration for conventional attention layers.
-        projection_config (ProjectionConfig): Configuration for the final output projection head.
         device (torch.device): The device for computations.
 
     Returns:
@@ -44,7 +42,6 @@ class HebbianEncoder(nn.Module):
                  id_per_session: Optional[List[Union[str, int]]] = None,
                  hebbian_config: Union[HebbianAttentionConfig, List[HebbianAttentionConfig]] = HebbianAttentionConfig(),
                  conv_config: ConvConfig = ConvConfig(),
-                 projection_config: ProjectionConfig = ProjectionConfig(),
                  device: torch.device = torch.device('cpu')):
         super().__init__()
 
@@ -60,7 +57,6 @@ class HebbianEncoder(nn.Module):
         self.embed_dim = embed_dim
         self.latent_dim = latent_dim
         self.bottleneck_dim = bottleneck_dim
-        self.projection_config = projection_config
         self.device = device
 
         # Hebbian Attention Block (shared across sessions): each session contributes its own
@@ -105,9 +101,8 @@ class HebbianEncoder(nn.Module):
     # layer(s) and can therefore still be overridden per session via add_neural_block. n_heads,
     # dropout, and drop_path are excluded since they're baked into the shared
     # head_proj/ff/perceiver built once at __init__ time.
-    _PER_SESSION_LAYER_FIELDS = ('tau_s', 'dt', 'w_plus', 'alpha', 'data_type', 'config', 'sliding',
-                                 'window_size', 'block_size', 'min_attn_value', 'max_attn_value',
-                                 'n_timescales')
+    _PER_SESSION_LAYER_FIELDS = ('tau_s', 'dt', 'w_plus', 'alpha', 'data_type', 'config',
+                                 'min_attn_value', 'max_attn_value', 'n_timescales')
 
     def add_neural_block(self, n_neurons: int, session_id: Union[str, int],
                          hebbian_config: Optional[HebbianAttentionConfig] = None):
@@ -150,7 +145,7 @@ class HebbianEncoder(nn.Module):
     def forward(self, x: torch.Tensor, session_id: Union[str, int],
                carry_state: bool = False) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Forward pass through the HebbianTransformerEncoder.
+        Forward pass through the HebbianEncoder.
 
         Args:
             x (torch.Tensor): Input tensor. Shape: (batch, n_neurons) or (batch, seq_len, n_neurons).
@@ -259,47 +254,3 @@ class HebbianEncoder(nn.Module):
 
         return self.hebbian_block.hebbian_forward(x, session_id, carry_state=carry_state)
 
-
-class TransformerEncoder(torch.nn.Module):
-    """
-    Linear encoder with attention layer
-    """
-
-    def __init__(self, n_inputs, embed_dim, latent_dim, n_layers=1, n_heads=1):
-        """
-        :param n_inputs: number of input neurons
-        :param hidden_dims:
-        :param latent_dim:
-        :param device: device to use
-        """
-
-        super(TransformerEncoder, self).__init__()
-
-        self.layers = torch.nn.ModuleList([torch.nn.Linear(n_inputs, embed_dim)])
-        for _ in range(n_layers):
-            self.layers.append(AttentionBlock(embed_dim, n_heads))
-
-        self.fc_mu = torch.nn.Linear(embed_dim, latent_dim)
-        self.fc_var = torch.nn.Linear(embed_dim, latent_dim)
-
-    def forward(self, x, id=None):
-        """
-        Forward pass of the encoder
-        :param spikes: spikes of the neurons [batch_size, n_neurons, n_timesteps]
-        :return: encoded signal the output neurons [batch_size, latent_dim]
-        """
-
-        x = x.unsqueeze(1)
-        for layer in self.layers:
-            x = layer(x)
-
-        mu = self.fc_mu(x.flatten(1))
-        logvar = self.fc_var(x.flatten(1))
-
-        return mu, logvar
-
-    def reparametrize(self, mu, logvar):
-        std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)
-
-        return eps * std + mu

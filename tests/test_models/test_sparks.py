@@ -4,7 +4,7 @@ import torch
 from sparks.models.dataclasses import HebbianAttentionConfig
 from sparks.models.decoders import linear
 
-from helpers import (BATCH, BOTTLENECK_DIM, EMBED_DIM, LATENT_DIM, N_NEURONS, N_TIMESTEPS, OUTPUT_DIM,
+from helpers import (BATCH, LATENT_DIM, N_NEURONS, N_TIMESTEPS, OUTPUT_DIM,
                      perturb_parameters)
 
 
@@ -77,6 +77,17 @@ def test_generate_shape(make_model):
 def test_hebbian_forward_shape(make_model, spikes):
     assert make_model().hebbian_forward(spikes, session_id=0).shape == \
         (BATCH, N_TIMESTEPS, N_NEURONS, N_NEURONS)
+
+
+def test_decoder_window_is_grouped_by_latent_dimension(make_model):
+    """The decoder is trained on this layout, so changing it would break existing checkpoints."""
+    model = make_model(tau_p=2)
+    z = torch.tensor([[[1., 2.], [3., 4.], [5., 6.]]])  # 1 trial, 3 timesteps, 2 latent dimensions
+
+    windows = model.pad_z(z)
+
+    assert windows[0, 0].tolist() == [0., 1., 0., 2.]  # zero-padded before the first timestep
+    assert windows[0, 1].tolist() == [1., 3., 2., 4.]  # dim 0 at t=0,1, then dim 1 at t=0,1
 
 
 def test_add_session(make_model, spikes):

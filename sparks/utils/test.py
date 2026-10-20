@@ -1,15 +1,14 @@
-from typing import Any, List, Union
+from typing import Any, List
 
 import numpy as np
 import torch
 
 from sparks.utils.misc import identity
 from sparks.models.sparks import SPARKS
-from sparks.models.transformer import HebbianTransformer
 
 
 @torch.no_grad()
-def test_on_batch(model: Union[SPARKS, HebbianTransformer],
+def test_on_batch(model: SPARKS,
                   inputs: torch.tensor,
                   targets: torch.tensor,
                   loss_fn: Any = None,
@@ -19,7 +18,7 @@ def test_on_batch(model: Union[SPARKS, HebbianTransformer],
     Tests the model on a batch of inputs and computes the loss.
 
     Args:
-        model (Union[SPARKS, HebbianTransformer]): The model instance.
+        model (SPARKS): The model instance.
         inputs (torch.tensor): The input data for the batch of evaluation.
         latent_dim (int): The dimensionality of the latent space.
         tau_p (int): The size of the past window for the model to consider.
@@ -35,30 +34,17 @@ def test_on_batch(model: Union[SPARKS, HebbianTransformer],
             - online (bool): If True, updates the model parameters at every time-step. Default is False.
             - burnin (int): The number of initial steps to exclude from training. Default is 0.
             - act (callable): Activation function to apply to the decoder outputs. Default is identity.
-            - chunk_length (int): If given, walks through `inputs`/`targets` in consecutive,
-                non-overlapping chunks of this many timesteps instead of one forward pass over the
-                whole sequence, carrying the model's recurrent state across chunk boundaries via
-                `carry_state=True` (see `SPARKS.forward`/`train_on_batch`) -- use this when a
-                recording is long enough that a control block's internal per-timestep coefficient
-                tensor (e.g. the [B, T, N, N] Hebbian/correlation history in
-                `sparks.models.controls`) doesn't fit in memory over the whole sequence at once.
-                Each chunk's outputs are moved to CPU before being concatenated back together,
-                since holding every chunk on the accelerator simultaneously would defeat the point
-                of chunking. Calls `model.reset_state(session_id)` once before the first chunk, so
-                this always starts a fresh sequence -- call this function once per trial/recording,
-                not once per chunk. Unlike the unchunked path (which runs the model on the full,
-                untruncated `inputs` and only trims `decoder_outputs_batch` for the loss when
-                tau_f > 1), the chunked path truncates `inputs`/`decoder_outputs_batch` by
-                `tau_f - 1` up front, exactly like `train_on_batch`, so a tau_f > 1 window never
-                needs future context spanning a chunk boundary; the returned decoder outputs are
-                therefore `tau_f - 1` steps shorter than the unchunked path's when tau_f > 1. Only
-                supported for SPARKS models (which implement `reset_state`/`carry_state`), not
-                HebbianTransformer. `test_loss` is accumulated as a sum of each chunk's own
-                (mean-reduced) loss -- like the sum over dataloader batches `test()` already does
-                -- so it is not directly comparable to the unchunked path's single loss value for
-                the same data; compare per-chunk-count-normalized values, or the returned
-                decoder/encoder outputs directly, instead. Default is None (single pass over the
-                whole sequence, as before).
+            - chunk_length (int): If given, walks through `inputs` in consecutive, non-overlapping
+                chunks of this many timesteps instead of one forward pass over the whole sequence,
+                carrying the model's recurrent state across chunk boundaries via `carry_state=True`
+                (see `SPARKS.forward`) -- use this when a recording is too long to process in one
+                pass, e.g. when a control block's per-timestep [B, T, N, N] coefficient history
+                (see `sparks.models.controls`) doesn't fit in memory. Each chunk's outputs are moved
+                to CPU before being concatenated, so the accelerator only ever holds one chunk.
+                Calls `model.reset_state(session_id)` once before the first chunk, so call this
+                function once per trial/recording, not once per chunk. The returned outputs and
+                loss are the same as the unchunked path's, up to floating-point error. Default is
+                None (single pass over the whole sequence).
 
     Returns:
         test_loss (float, Optional): The computed loss for the current batch of data.
@@ -70,7 +56,6 @@ def test_on_batch(model: Union[SPARKS, HebbianTransformer],
     session_id = kwargs.get('session_id', 0)
     act = kwargs.get('act', identity)
     tau_f = getattr(model, 'tau_f', 1)
-    device = kwargs.get('device', 'cpu')
     chunk_length = kwargs.get('chunk_length', None)
 
     model.eval()
@@ -128,8 +113,7 @@ def get_hebbian_coeffs_on_batch(model: SPARKS,
     dynamics rather than an output to be scored.
 
     Args:
-        model (SPARKS): The model instance. Only SPARKS is supported -- `HebbianTransformer`'s
-            `hebbian_forward` takes no session argument and has no `reset_state`.
+        model (SPARKS): The model instance.
         inputs (torch.tensor): The input data for the batch, shape [B, T, N].
         **kwargs (dict, optional): Additional keyword arguments for advanced configurations.
 
@@ -201,7 +185,7 @@ def get_hebbian_coeffs_on_batch(model: SPARKS,
 
 
 @torch.no_grad()
-def test(model: Union[SPARKS, HebbianTransformer],
+def test(model: SPARKS,
          test_dls: List,
          loss_fn: Any = None,
          device: torch.device = 'cpu',
@@ -210,7 +194,7 @@ def test(model: Union[SPARKS, HebbianTransformer],
     Tests the model on a dataset represented by a dataloader and computes the loss.
 
     Args:
-        model (Union[SPARKS, HebbianTransformer]): The model instance.
+        model (SPARKS): The model instance.
         test_dls  (List[torch.utils.data.DataLoader]): Dataloaders for the testing data.
         latent_dim (int): The dimensionality of the latent space.
         tau_p (int): The size of the past window for the model to consider.

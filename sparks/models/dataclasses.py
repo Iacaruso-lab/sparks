@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Optional, Type, Union, Dict, Any
+from typing import List, Type, Union, Dict, Any
 from torch import nn
 
 from sparks.models.blocks import HebbianAttentionBlock, AttentionBlock
@@ -17,13 +17,10 @@ class HebbianAttentionConfig:
     w_plus: float = 0.001
     alpha: float = 1.1
     data_type: str = 'ephys' # Type of data, can be 'ephys' or 'calcium'
-    sliding: bool = False # Whether to use sliding windows
-    window_size: int = 1 # The size of the sliding window
-    block_size: int = 1 # The size of the block for the attention mechanism in sliding mode
     min_attn_value: float = -10. # Minimum value for attention coefficients (only consumed by calcium; ephys's clamp is hardcoded)
     max_attn_value: float = 10. # Maximum value for attention coefficients (only consumed by calcium; ephys's clamp is hardcoded)
     n_timescales: int = 5 # Number of log-spaced (10ms-1s) decay timescales for the calcium multi-timescale fluorescence trace
-    config: str = 'light' # 'full', 'light', or 'sparse' to specify the type of Hebbian attention block
+    config: str = 'light' # 'full' or 'light' to specify the type of Hebbian attention block
     params: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
@@ -41,9 +38,6 @@ class HebbianAttentionConfig:
             'dropout': self.dropout,
             'drop_path': self.drop_path,
             'data_type': self.data_type,
-            'sliding': self.sliding,
-            'window_size': self.window_size,
-            'block_size': self.block_size,
             'min_attn_value': self.min_attn_value,
             'max_attn_value': self.max_attn_value,
             'n_timescales': self.n_timescales,
@@ -92,11 +86,3 @@ class ConvConfig:
         merged_params = {**config_params, **self.params}
         self.params = merged_params
 
-
-@dataclass
-class ProjectionConfig:
-    """Configuration for the output projection head."""
-    output_type: str = 'flatten'
-    # Experts can provide a custom nn.Module here
-    custom_head: Optional[nn.Module] = None
-    params: Dict[str, Any] = field(default_factory=dict)

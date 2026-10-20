@@ -1,11 +1,9 @@
 from typing import Union, List, Optional, Tuple
 import torch
-from torch import nn
 import torch.nn.functional as F
-import numpy as np
 
 from sparks.models.encoders import HebbianEncoder
-from sparks.models.dataclasses import HebbianAttentionConfig, ConvConfig, ProjectionConfig
+from sparks.models.dataclasses import HebbianAttentionConfig, ConvConfig
 from sparks.models.decoders import mlp
 
 
@@ -27,7 +25,6 @@ class SPARKS(torch.nn.Module):
                  id_per_session: Optional[List[Union[str, int]]] = None,
                  hebbian_config: Union[HebbianAttentionConfig, List[HebbianAttentionConfig]] = HebbianAttentionConfig(),
                  conv_config: ConvConfig = ConvConfig(),
-                 projection_config: ProjectionConfig = ProjectionConfig(),
                  decoder: Optional[torch.nn.Module] = None,
                  output_dim_per_session: Optional[Union[int, List[int]]] = None,
                  joint_decoder: bool = False,
@@ -58,7 +55,6 @@ class SPARKS(torch.nn.Module):
                                       id_per_session=id_per_session,
                                       hebbian_config=hebbian_config,
                                       conv_config=conv_config,
-                                      projection_config=projection_config,
                                       device=device)
         
         if decoder is None:
@@ -193,14 +189,11 @@ class SPARKS(torch.nn.Module):
         # Shape becomes: [B, T, D, tau_p]
         z_windows = z_padded.unfold(dimension=1, size=self.tau_p, step=1)
         
-        # Reorder and Flatten
-        # We want the window elements to be chronological, so we swap D and tau_p.
-        # .permute transforms [B, T, D, tau_p] -> [B, T, tau_p, D]
-        # z_reordered = z_windows.permute(0, 1, 3, 2).contiguous()
-        
-        # Finally, flatten the window and feature dimensions together
-        # Shape: [B, T, tau_p * D]
-        z_flat = z_windows.flatten(start_dim=2)  # Shape: [B, T, tau_p * D]
+        # Flatten the window and feature dimensions together. The result is grouped by latent
+        # dimension (each dimension's tau_p window values are contiguous), not by timestep; the
+        # decoder is trained on this layout, so reordering it would break existing checkpoints.
+        # Shape: [B, T, D * tau_p]
+        z_flat = z_windows.flatten(start_dim=2)
         
         return z_flat
     

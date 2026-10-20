@@ -1,7 +1,6 @@
 import os
 import pickle
 
-import numpy as np
 from allensdk.brain_observatory.ecephys.ecephys_project_cache import EcephysProjectCache
 import tqdm
 

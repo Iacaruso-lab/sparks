@@ -3,9 +3,7 @@ from typing import Tuple
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
-from sparks.models.attention.scan import parallel_affine_scan
 from sparks.models.utils import detach_state
 
 
@@ -59,20 +57,6 @@ class BaseHebbianAttentionLayer(nn.Module):
 
         Returns:
             Tuple[torch.Tensor, torch.Tensor]: Pre-synaptic spikes and post-synaptic spikes.
-        """
-        raise NotImplementedError("This method should be implemented in subclasses.")
-
-    def trace_decay(self, trace: torch.Tensor, spikes: torch.Tensor, tau_s: float) -> torch.Tensor:
-        """
-        Update the eligibility traces.
-
-        Args:
-            trace (torch.Tensor): Current eligibility trace.
-            spikes (torch.Tensor): Tensor of neuron spike activity.
-            tau_s (float): The time constant for trace decay.
-
-        Returns:
-            torch.Tensor: The updated eligibility trace.
         """
         raise NotImplementedError("This method should be implemented in subclasses.")
 

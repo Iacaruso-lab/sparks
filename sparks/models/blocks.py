@@ -7,16 +7,13 @@ import torch.nn.functional as F
 
 from sparks.models.attention.ephys import FullEphysAttentionLayer, LightEphysAttentionLayer
 from sparks.models.attention.calcium import FullCalciumAttentionLayer, LightCalciumAttentionLayer
-from sparks.models.attention.sparse import SlidingWindowEphysAttentionLayer, SlidingWindowCalciumAttentionLayer
 from sparks.models.attention.scan import parallel_affine_scan
 from sparks.models.utils import FeedForward, DropPath, detach_state
 
-CONFIG_DICT = {'ephys': {'full': FullEphysAttentionLayer, 
-                         'light': LightEphysAttentionLayer, 
-                         'sparse': SlidingWindowEphysAttentionLayer},
-               'calcium': {'full': FullCalciumAttentionLayer, 
-                           'light': LightCalciumAttentionLayer, 
-                           'sparse': SlidingWindowCalciumAttentionLayer}
+CONFIG_DICT = {'ephys': {'full': FullEphysAttentionLayer,
+                         'light': LightEphysAttentionLayer},
+               'calcium': {'full': FullCalciumAttentionLayer,
+                           'light': LightCalciumAttentionLayer}
                 }
 
 class HebbianAttentionBlock(nn.Module):
@@ -32,9 +29,6 @@ class HebbianAttentionBlock(nn.Module):
                  alpha: float = 1.1,
                  data_type: str = 'ephys',
                  config: str = 'full',
-                 sliding: bool = False,
-                 window_size: int = 1,
-                 block_size: int = 1,
                  n_heads: int = 1,
                  min_attn_value: float = -10.,
                  max_attn_value: float = 10.,
@@ -63,13 +57,10 @@ class HebbianAttentionBlock(nn.Module):
             w_plus (float, optional): The positive weight for the attention mechanism. Defaults to 0.001.
             alpha (float, optional): The scaling factor for the post-synaptic weight. Defaults to 1.1.
             data_type (str, optional): The type of data, can be 'ephys' or 'calcium'. Defaults to 'ephys'.
-            sliding (bool, optional): Whether to use sliding windows for attention. Defaults to False.
-            window_size (int, optional): The size of the sliding window for attention. Defaults to 1.
-            block_size (int, optional): The size of the block for the attention mechanism in sliding mode. Defaults to 1.
             min_attn_value (float, optional): The minimum value for attention coefficients. Defaults to -10. (only
                                                 consumed by calcium; ephys's clamp is hardcoded regardless).
             max_attn_value (float, optional): The maximum value for attention coefficients. Defaults to 10.
-            config (HebbianAttentionConfig): Configuration for the Hebbian attention block (full weights, light or sparse).
+            config (HebbianAttentionConfig): Configuration for the Hebbian attention block (full weights or light).
 
         Returns:
             None
@@ -102,9 +93,6 @@ class HebbianAttentionBlock(nn.Module):
                                   alpha=alpha,
                                   min_attn_value=min_attn_value,
                                   max_attn_value=max_attn_value,
-                                  sliding=sliding,
-                                  window_size=window_size,
-                                  block_size=block_size,
                                   n_timescales=n_timescales)
                 for t in tau_s_per_head
             ])
@@ -115,8 +103,7 @@ class HebbianAttentionBlock(nn.Module):
 
         # Defaults reused by add_hebbian_layer for any field a new session doesn't override.
         self._default_layer_config = dict(tau_s=tau_s, dt=dt, w_plus=w_plus, alpha=alpha,
-                                          data_type=data_type, config=config, sliding=sliding,
-                                          window_size=window_size, block_size=block_size,
+                                          data_type=data_type, config=config,
                                           min_attn_value=min_attn_value, max_attn_value=max_attn_value,
                                           n_timescales=n_timescales)
 
@@ -138,9 +125,6 @@ class HebbianAttentionBlock(nn.Module):
                           alpha: Optional[float] = None,
                           data_type: Optional[str] = None,
                           config: Optional[str] = None,
-                          sliding: Optional[bool] = None,
-                          window_size: Optional[int] = None,
-                          block_size: Optional[int] = None,
                           min_attn_value: Optional[float] = None,
                           max_attn_value: Optional[float] = None,
                           n_timescales: Optional[int] = None) -> None:
@@ -166,8 +150,7 @@ class HebbianAttentionBlock(nn.Module):
 
         cfg = dict(self._default_layer_config)
         overrides = dict(tau_s=tau_s, dt=dt, w_plus=w_plus, alpha=alpha, data_type=data_type,
-                         config=config, sliding=sliding, window_size=window_size,
-                         block_size=block_size, min_attn_value=min_attn_value,
+                         config=config, min_attn_value=min_attn_value,
                          max_attn_value=max_attn_value, n_timescales=n_timescales)
         cfg.update({k: v for k, v in overrides.items() if v is not None})
 
@@ -192,9 +175,6 @@ class HebbianAttentionBlock(nn.Module):
                               alpha=cfg['alpha'],
                               min_attn_value=cfg['min_attn_value'],
                               max_attn_value=cfg['max_attn_value'],
-                              sliding=cfg['sliding'],
-                              window_size=cfg['window_size'],
-                              block_size=cfg['block_size'],
                               n_timescales=cfg['n_timescales'])
             for t in tau_s_per_head
         ]).to(device)
