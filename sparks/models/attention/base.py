@@ -1,32 +1,34 @@
-
-from typing import Tuple
+from abc import ABCMeta, abstractmethod
+from typing import Any, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
 
-from sparks.models.utils import detach_state
+from sparks.models.state import CarriedState
 
 
-class BaseHebbianAttentionLayer(nn.Module):
-    """Abstract base class for a single Hebbian attention head.
+class HebbianAttentionLayer(CarriedState, metaclass=ABCMeta):
+    """
+    Base class for a Hebbian attention head: computes [B, T, N, N] coefficients over every pair
+    of neurons from their spikes (see `stdp_coefficients`, implemented by subclasses), and
+    projects each neuron's row of coefficients to an embedding with `v_proj`.
 
     Args:
-            n_neurons (int): Total number of neurons.
-            embed_dim (int): The embedding dimension.
-            tau_s (float): The time constant for STDP.
-            dt (float): The time-step for STDP coefficients.
-            w_plus (float): The initial weight for the attention mechanism.
-            alpha (float): The scaling factor for the post-synaptic weight.
+        n_neurons (int): Number of neurons.
+        embed_dim (int): The embedding dimension.
+        tau_s (float): The time constant of the coefficients' dynamics.
+        dt (float): The time-step, in seconds.
+        w_plus (float): The scale of the potentiation weights (ephys).
+        alpha (float): The scaling factor of the post-synaptic weight (ephys).
     """
 
-    def __init__(self, 
-                 n_neurons: int, 
-                 embed_dim: int,                  
+    def __init__(self,
+                 n_neurons: int,
+                 embed_dim: int,
                  tau_s: float = 1.0,
                  dt: float = 0.001,
                  w_plus: float = 0.001,
                  alpha: float = 1.1):
-
         super().__init__()
         self.n_neurons = n_neurons
         self.embed_dim = embed_dim
@@ -36,120 +38,55 @@ class BaseHebbianAttentionLayer(nn.Module):
         self.register_buffer('w_plus', torch.tensor(w_plus, dtype=torch.float32))
         self.register_buffer('alpha', torch.tensor(alpha, dtype=torch.float32))
 
-    def forward(self, spikes: torch.Tensor) -> torch.Tensor:
-        """
-        Perform the forward pass for the Hebbian Attention layer.
+        self.v_proj = nn.Linear(self.n_neurons, self.embed_dim)
 
+    @abstractmethod
+    def stdp_coefficients(self, spikes: torch.Tensor, state: Any = None) -> Tuple[torch.Tensor, Any]:
+        """
         Args:
-            spikes (torch.Tensor): Tensor representation of the spikes from the neurons.
-                                    It should be of shape [n_total_neurons, n_timesteps].
-
-        """
-        raise NotImplementedError("This method should be implemented in subclasses.")
-
-    def get_pre_post_spikes(self, spikes: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Get the pre and post synaptic spikes from the input spikes tensor.
-
-        Args:
-            spikes (torch.Tensor): Tensor of shape [batch_size, n_neurons, n_timesteps].
+            spikes (torch.Tensor): [B, T, N] spikes.
+            state: The recurrent state to start from, as returned by a previous call; None starts
+                from zero.
 
         Returns:
-            Tuple[torch.Tensor, torch.Tensor]: Pre-synaptic spikes and post-synaptic spikes.
+            The [B, T, N, N] coefficients, and the recurrent state at the last timestep.
         """
-        raise NotImplementedError("This method should be implemented in subclasses.")
 
-
-class DenseHebbianAttentionLayer(BaseHebbianAttentionLayer):
-    """Abstract class for a dense Hebbian attention head.
-        Args:
-            n_neurons (int): Total number of neurons.
-            embed_dim (int): The embedding dimension.
-            tau_s (float): The time constant for STDP.
-            dt (float): The time-step for STDP coefficients.
-            w_plus (float): The initial weight for the attention mechanism.
-            alpha (float): The scaling factor for the post-synaptic weight.
-    
-    """
-    
-    def __init__(self,
-                 n_neurons: int,
-                 embed_dim: int,
-                 tau_s: float = 1.0,
-                 dt: float = 0.001,
-                 w_plus: float = 0.001,
-                 alpha: float = 1.1):
-
-        super().__init__(n_neurons=n_neurons,
-                         embed_dim=embed_dim,
-                         tau_s=tau_s,
-                         dt=dt,
-                         w_plus=w_plus,
-                         alpha=alpha)
-
-        self.v_proj = nn.Linear(self.n_neurons, self.embed_dim)
-        self._carried_state = None
-
-    def forward(self, spikes, carry_state: bool = False):
+    def forward(self, spikes: torch.Tensor, carry_state: bool = False,
+                session_id: Optional[Union[str, int]] = None) -> torch.Tensor:
         """
         Args:
-            spikes: see stdp_coefficients.
-            carry_state: If True, uses this layer's STDP/trace state from the end of the
-                previous forward() call as the initial condition instead of zeros, and stores
-                the (detached) state at the end of this call for the next one -- lets a long
-                recording be walked through in consecutive chunks with continuous dynamics
-                instead of resetting to zero at every chunk boundary. State is detached before
-                being stored, so gradients don't flow back across chunks (truncated BPTT). If
-                False (default), the call is stateless in both directions: it starts from zero
-                and leaves any stored state untouched. Call reset_state() before the first chunk
-                of a new, unrelated sequence.
-        """
-        state = self._carried_state if carry_state else None
-        stdp, new_state = self.stdp_coefficients(spikes, state=state)
-        if carry_state:
-            self._carried_state = detach_state(new_state)
-        return self.v_proj(stdp)  # [B, T, N, D] — real scores
+            spikes (torch.Tensor): [B, T, N] spikes.
+            carry_state (bool): If True, starts from the state stored by the previous carrying call
+                instead of zeros, and stores this call's end state for the next one -- lets a long
+                recording be walked through in consecutive chunks with continuous dynamics (see
+                `CarriedState`). If False (default), the call is stateless in both directions.
+            session_id: The key the carried state is stored under. Each layer serves a single
+                session; HebbianAttentionBlock passes it so that resetting one session's state
+                leaves the others' alone. Default is None.
 
-    def stdp_forward(self, spikes, carry_state: bool = False):
+        Returns:
+            torch.Tensor: [B, T, N, embed_dim], each neuron's embedding at each timestep.
         """
-        Return the raw STDP coefficients ([B, T, N, N]) rather than their projection to
-        [B, T, N, D], for analysis of the Hebbian dynamics themselves.
+        return self.v_proj(self.stdp_forward(spikes, carry_state=carry_state, session_id=session_id))
 
-        Args:
-            spikes: see stdp_coefficients.
-            carry_state: If True, behaves exactly like forward(): starts from the state stored at
-                the end of the previous carrying call and stores this call's (detached) end-state
-                for the next one, so a long recording can be walked through in consecutive chunks
-                with continuous dynamics. If False (default), the call is stateless in *both*
-                directions -- it starts from zero and also leaves any state stored by a previous
-                forward() untouched, so pulling coefficients out for analysis cannot disturb an
-                in-progress chunked forward pass. Call reset_state() before the first chunk of a
-                new, unrelated sequence.
+    def stdp_forward(self, spikes: torch.Tensor, carry_state: bool = False,
+                     session_id: Optional[Union[str, int]] = None) -> torch.Tensor:
         """
-        if not carry_state:
-            return self.stdp_coefficients(spikes)[0]
-
-        stdp, new_state = self.stdp_coefficients(spikes, state=self._carried_state)
-        self._carried_state = detach_state(new_state)
+        The raw [B, T, N, N] coefficients rather than their projection, for analysis of the
+        Hebbian dynamics themselves. Arguments as for `forward`, whose carried state it shares.
+        """
+        stdp, new_state = self.stdp_coefficients(spikes, state=self.load_carried_state(session_id, carry_state))
+        self.store_carried_state(session_id, new_state, carry_state)
         return stdp
 
-    def reset_state(self):
-        self._carried_state = None
     def get_pre_post_spikes(self, spikes: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Get the pre and post synaptic spikes from the input spikes tensor.
-
         Args:
-            spikes (torch.Tensor): Tensor of shape [batch_size, n_neurons, n_timesteps].
+            spikes (torch.Tensor): [B, N] spikes at one timestep.
 
         Returns:
-            Tuple[torch.Tensor, torch.Tensor]: Pre-synaptic spikes and post-synaptic spikes.
+            The pre-synaptic spikes as rows, [B, N, 1], and the post-synaptic spikes as columns,
+            [B, 1, N].
         """
-        pre_spikes = spikes.unsqueeze(2) # [batch_size, 1, n_neurons]
-        post_spikes = spikes.unsqueeze(1) # [batch_size, n_neurons, 1]
-
-        return pre_spikes, post_spikes
-
-
-
-
+        return spikes.unsqueeze(2), spikes.unsqueeze(1)

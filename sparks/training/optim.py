@@ -115,7 +115,7 @@ def per_module_clip_groups(model: torch.nn.Module) -> List[Tuple[str, List[torch
     """
     Returns one (name, params) group per submodule that directly owns at least one trainable
     parameter -- via `module.parameters(recurse=False)`, so a container's own extra raw
-    nn.Parameters (e.g. DenseHebbianAttentionLayer's `neuron_features`) form their own group
+    nn.Parameters (e.g. FullEphysAttentionLayer's `latent_delta_pre`) form their own group
     separate from their child submodules' (e.g. its `v_proj`) -- covering every parameter in
     `model` exactly once, since each parameter is owned by exactly one module.
 

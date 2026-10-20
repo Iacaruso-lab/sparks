@@ -190,3 +190,12 @@ def test_add_session_accounts_for_future_window(make_model, spikes):
     model.add_session(n_neurons=7, session_id='b', new_output_dim=6)
 
     assert model(spikes[..., :7], session_id='b')[1].shape == (BATCH, N_TIMESTEPS, 6 * 2)
+
+
+def test_add_session_matches_the_model_dtype(make_model, spikes):
+    model = make_model(id_per_session=['a']).double()
+
+    model.add_session(n_neurons=7, session_id='b', new_output_dim=6)
+
+    assert {param.dtype for param in model.parameters()} == {torch.float64}
+    assert model(spikes[..., :7].double(), session_id='b')[1].dtype == torch.float64

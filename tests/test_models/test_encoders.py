@@ -27,9 +27,9 @@ def test_hebbian_encoder():
     assert set(encoder.hebbian_block.attention_layers.keys()) == set(id_per_session)
 
     # Test forward pass for each session
-    for sess_id, n_neurons in zip(id_per_session, n_neurons_per_sess):
+    for session_id, n_neurons in zip(id_per_session, n_neurons_per_sess):
         x = torch.randn(batch_size, 1, n_neurons)
-        mu, logvar = encoder(x, sess_id)
+        mu, logvar = encoder(x, session_id)
 
         assert mu.shape == (batch_size, 1, latent_dim)
         assert logvar.shape == (batch_size, 1, latent_dim)
@@ -41,7 +41,7 @@ def test_hebbian_encoder():
     assert z.shape == (batch_size, latent_dim)
 
 
-def test_add_neural_block():
+def test_add_session():
     """Adding a new session extends the existing shared Hebbian attention block in place,
     rather than creating a new one."""
     from sparks.models.encoders import HebbianEncoder
@@ -59,7 +59,7 @@ def test_add_neural_block():
     shared_block = encoder.hebbian_block
 
     # Add a new session
-    encoder.add_neural_block(n_neurons=150, session_id='session2', tau_s=0.5)
+    encoder.add_session(n_neurons=150, session_id='session2', tau_s=0.5)
 
     assert 'session2' in encoder.session_ids
     assert encoder.n_neurons_map['session2'] == 150
@@ -71,14 +71,14 @@ def test_add_neural_block():
 
     # Both sessions still forward correctly through the shared block.
     batch_size = 8
-    for sess_id, n_neurons in [('session1', 100), ('session2', 150)]:
+    for session_id, n_neurons in [('session1', 100), ('session2', 150)]:
         x = torch.randn(batch_size, 1, n_neurons)
-        mu, logvar = encoder(x, sess_id)
+        mu, logvar = encoder(x, session_id)
         assert mu.shape == (batch_size, 1, 32)
 
     # Test that duplicate session raises error
     with pytest.raises(ValueError):
-        encoder.add_neural_block(150, 'session2')
+        encoder.add_session(150, 'session2')
 
 
 def test_hebbian_encoder_default_session_ids():

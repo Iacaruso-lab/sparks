@@ -5,11 +5,16 @@ from torch import nn
 from torch.nn import Parameter
 import torch.nn.functional as F
 
-from sparks.models.attention.base import DenseHebbianAttentionLayer
+from sparks.models.attention.base import HebbianAttentionLayer
 from sparks.models.scan import clamped_affine_scan
 
 
-class CalciumAttentionLayer(DenseHebbianAttentionLayer):
+class CalciumAttentionLayer(HebbianAttentionLayer):
+    """
+    Hebbian attention head for calcium imaging: each neuron's activity is integrated into a
+    multi-timescale trace, and the coefficient between neurons i and j is a learned bilinear
+    form of their traces.
+    """
     # Unlike Ephys's STDP matrix (hardcoded clamp_(-0.5, 1.5) regardless of these settings), the
     # calcium fluorescence trace is a leaky integrator with no built-in bound: at the longest
     # timescale (1s, decay ~0.999), the steady-state amplification is ~1/(1-decay) ~= 1000x, so
@@ -34,25 +39,23 @@ class CalciumAttentionLayer(DenseHebbianAttentionLayer):
                  n_timescales: int = 5):
 
         """
-        CalciumAttentionLayer class.
-
         Args:
-            n_total_neurons (int): Total number of neurons.
+            n_neurons (int): Number of neurons.
             embed_dim (int): The embedding dimension.
-            min_attn_value (float): Minimum value for attention coefficients.
-            max_attn_value (float): Maximum value for attention coefficients.
-            tau_s (float): Scales the range of decay timescales (10ms-1s at tau_s=1).
+            min_attn_value (float): Lower bound of the fluorescence trace.
+            max_attn_value (float): Upper bound of the fluorescence trace.
+            tau_s (float): Scales the range of decay timescales (10ms-1s at tau_s=1). Must be positive.
             dt (float): The time-step, in seconds.
             n_timescales (int): Number of log-spaced decay timescales for the multi-timescale
                                     fluorescence trace fed into the bilinear head.
 
         Attributes:
-            n_neurons (int): Total number of neurons.
-            embed_dim (int): The embedding dimension.
-            attention: The attention feature. Initialized as 0.
             f, g (nn.Sequential): Bilinear-head MLPs mapping the multi-timescale activity trace
                                     into query/key embeddings, contracted to form the score matrix.
         """
+
+        if tau_s <= 0:
+            raise ValueError(f"tau_s must be positive, got {tau_s}.")
 
         super().__init__(n_neurons=n_neurons,
                          embed_dim=embed_dim,
@@ -85,10 +88,7 @@ class CalciumAttentionLayer(DenseHebbianAttentionLayer):
         timescale. The anchors are a buffer, so a loaded checkpoint keeps the ones it was trained
         with.
         """
-        # tau_s=0 is LightCalciumAttentionLayer's legacy switch to a non-leaky integrator, which
-        # it implements through dt, so the range is left unscaled there.
-        scale = self.tau_s.item() if self.tau_s.item() > 0 else 1.0
-        decay_rates = scale * torch.logspace(math.log10(0.01), math.log10(1.0), self.n_timescales)  # [K], seconds
+        decay_rates = self.tau_s.item() * torch.logspace(math.log10(0.01), math.log10(1.0), self.n_timescales)  # [K], seconds
         self.register_buffer('decay_rates', decay_rates)
 
         latent_delta_init = math.log(math.exp(1.0) - 1.0)  # inverse softplus of 1.0
@@ -171,51 +171,3 @@ class CalciumAttentionLayer(DenseHebbianAttentionLayer):
             raise ValueError("NaN values detected in attention coefficients.")
 
         return ca_trace_history, ca_trace_history[:, -1]
-
-
-class FullCalciumAttentionLayer(CalciumAttentionLayer):
-    """
-    FullCalciumAttentionLayer class. Currently identical to the base CalciumAttentionLayer --
-    the multi-timescale decay (see CalciumAttentionLayer._decay_init) is shared infrastructure,
-    not per-neuron-pair capacity, so there is no full/light distinction left to add here. Kept
-    as its own class since `_ATTENTION_LAYERS` in hebbian_block.py dispatches on it by name.
-    """
-    pass
-
-
-class LightCalciumAttentionLayer(CalciumAttentionLayer):
-    def __init__(self,
-                 n_neurons: int,
-                 embed_dim: int,
-                 min_attn_value: float = -10.,
-                 max_attn_value: float = 10.,
-                 tau_s: float = 1.0,
-                 dt: float = 0.001,
-                 n_timescales: int = 5):
-
-        """
-        LightCalciumAttentionLayer
-
-        Args:
-            n_total_neurons (int): Total number of neurons.
-            embed_dim (int): The embedding dimension.
-            min_attn_value (float): Minimum value for attention coefficients.
-            max_attn_value (float): Maximum value for attention coefficients.
-
-        Attributes:
-            n_neurons (int): Total number of neurons.
-            embed_dim (int): The embedding dimension.
-            attention: The attention feature. Initialized as 0.
-        """
-
-        super().__init__(n_neurons=n_neurons,
-                         embed_dim=embed_dim,
-                         min_attn_value=min_attn_value,
-                         max_attn_value=max_attn_value,
-                         tau_s=tau_s,
-                         dt=dt,
-                         n_timescales=n_timescales)
-
-        if tau_s == 0:
-            self.tau_s = torch.tensor(1.0)
-            self.dt = torch.tensor(0.0)

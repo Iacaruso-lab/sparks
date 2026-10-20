@@ -39,7 +39,9 @@ class MLPControlBlock(EMAControlBlockBase):
         )
 
     def forward(self, spikes: torch.Tensor, session_id: Union[str, int], carry_state: bool = False) -> torch.Tensor:
-        x = self._ema_features(spikes, session_id, carry_state)
+        sid = str(session_id)
+        x, ema_state = self._ema_features(spikes, sid, self.load_carried_state(sid, carry_state))
+        self.store_carried_state(sid, ema_state, carry_state)
         return self.out_mlp(x)  # [B, T, bottleneck_dim * embed_dim]
 
 
@@ -76,25 +78,15 @@ class GRUControlBlock(EMAControlBlockBase):
         self.dropout = nn.Dropout(dropout)
         self.out_proj = nn.Linear(hidden_size, bottleneck_dim * embed_dim)
 
-        self._carried_gru_state = {}  # session_id (str) -> GRU hidden state
-
     def forward(self, spikes: torch.Tensor, session_id: Union[str, int], carry_state: bool = False) -> torch.Tensor:
         sid = str(session_id)
-        x = self._ema_features(spikes, sid, carry_state)
+        ema_state, gru_state = self.load_carried_state(sid, carry_state) or (None, None)
 
-        gru_state = self._carried_gru_state.get(sid) if carry_state else None
-        out, h_n = self.gru(x, gru_state)
-        if carry_state:
-            self._carried_gru_state[sid] = h_n.detach()
+        x, ema_state = self._ema_features(spikes, sid, ema_state)
+        out, gru_state = self.gru(x, gru_state)
+        self.store_carried_state(sid, (ema_state, gru_state), carry_state)
 
         return self.out_proj(self.dropout(out))  # [B, T, bottleneck_dim * embed_dim]
-
-    def reset_state(self, session_id: Optional[Union[str, int]] = None):
-        super().reset_state(session_id)
-        if session_id is None:
-            self._carried_gru_state = {}
-        else:
-            self._carried_gru_state.pop(str(session_id), None)
 
 
 class TransformerControlBlock(EMAControlBlockBase):
@@ -131,6 +123,8 @@ class TransformerControlBlock(EMAControlBlockBase):
         self.out_proj = nn.Linear(embed_dim, bottleneck_dim * embed_dim)
 
     def forward(self, spikes: torch.Tensor, session_id: Union[str, int], carry_state: bool = False) -> torch.Tensor:
-        x = self._ema_features(spikes, session_id, carry_state)
+        sid = str(session_id)
+        x, ema_state = self._ema_features(spikes, sid, self.load_carried_state(sid, carry_state))
+        self.store_carried_state(sid, ema_state, carry_state)
         x = self.attn_block(x)
         return self.out_proj(x)  # [B, T, bottleneck_dim * embed_dim]

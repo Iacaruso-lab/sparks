@@ -35,11 +35,11 @@ def test_hebbian_forward_shape_multi_head(spikes):
     assert block.hebbian_forward(spikes, 'a').shape == (2, BATCH, N_TIMESTEPS, N_NEURONS, N_NEURONS)
 
 
-def test_add_hebbian_layer_extends_the_shared_block(spikes):
+def test_add_session_extends_the_shared_block(spikes):
     block = make_block(tau_s=[0.5, 2.0])
     shared_modules = (block.head_proj, block.ff, block.perceiver)
 
-    block.add_hebbian_layer(n_neurons=7, session_id='b')
+    block.add_session(n_neurons=7, session_id='b')
 
     assert (block.head_proj, block.ff, block.perceiver) == shared_modules
     assert len(block.attention_layers['b']) == 2
@@ -47,19 +47,19 @@ def test_add_hebbian_layer_extends_the_shared_block(spikes):
     assert block(spikes[..., :7], 'b').shape == (BATCH, N_TIMESTEPS, BOTTLENECK_DIM * EMBED_DIM)
 
 
-def test_add_hebbian_layer_rejects_duplicate_session():
+def test_add_session_rejects_duplicate_session():
     block = make_block()
 
     with pytest.raises(ValueError):
-        block.add_hebbian_layer(n_neurons=7, session_id='a')
+        block.add_session(n_neurons=7, session_id='a')
 
 
-def test_add_hebbian_layer_rejects_different_head_count():
+def test_add_session_rejects_different_head_count():
     """head_proj's input width is fixed by the number of heads the block was built with."""
     block = make_block(tau_s=[0.5, 2.0])
 
     with pytest.raises(ValueError):
-        block.add_hebbian_layer(n_neurons=7, session_id='b', tau_s=0.3)
+        block.add_session(n_neurons=7, session_id='b', tau_s=0.3)
 
 
 def test_invalid_attention_variant_raises():

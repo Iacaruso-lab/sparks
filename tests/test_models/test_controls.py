@@ -3,8 +3,10 @@ import torch
 
 from sparks.models import controls
 from sparks.models.configs import HebbianAttentionConfig
+from sparks.models.front_end import FrontEndBlock
+from sparks.training.evaluation import get_hebbian_coeffs_on_batch
 
-from helpers import BATCH, LATENT_DIM, N_TIMESTEPS, OUTPUT_DIM, perturb_parameters
+from helpers import BATCH, LATENT_DIM, N_NEURONS, N_TIMESTEPS, OUTPUT_DIM, perturb_parameters
 
 CONTROL_BLOCKS = [getattr(controls, name) for name in controls.__all__]
 
@@ -94,3 +96,30 @@ def test_sequence_controls_take_per_session_timescales(make_model, block_class):
     assert block.tau_s_per_head_map['new'] == [0.5] and block.dt_map['new'] == 0.01
     with pytest.raises(TypeError):
         model.add_session(n_neurons=7, session_id='other', new_output_dim=6, w_plus=0.1)
+
+
+@pytest.mark.parametrize('block_class', [controls.SymmetricHebbianAttentionBlock, controls.CorrelationAttentionBlock],
+                         ids=lambda cls: cls.__name__)
+def test_coefficient_controls_expose_their_coefficients(make_model, spikes, block_class):
+    """So that sparks.training.get_hebbian_coeffs_on_batch works for them as for the real model."""
+    model = make_model(hebbian_config=HebbianAttentionConfig(block_class=block_class, tau_s=[0.5, 2.0]))
+
+    full = get_hebbian_coeffs_on_batch(model, spikes)
+    chunked = get_hebbian_coeffs_on_batch(model, spikes, chunk_length=6)
+
+    assert full.shape == (2, BATCH, N_TIMESTEPS, N_NEURONS, N_NEURONS)
+    torch.testing.assert_close(chunked, full)
+
+
+@pytest.mark.parametrize('block_class', [controls.MLPControlBlock, controls.GRUControlBlock,
+                                         controls.TransformerControlBlock], ids=lambda cls: cls.__name__)
+def test_sequence_controls_have_no_coefficients(make_model, spikes, block_class):
+    model = make_model(hebbian_config=HebbianAttentionConfig(block_class=block_class))
+
+    with pytest.raises(NotImplementedError):
+        model.hebbian_forward(spikes, session_id=0)
+
+
+@pytest.mark.parametrize('block_class', CONTROL_BLOCKS, ids=lambda cls: cls.__name__)
+def test_controls_implement_the_front_end_interface(block_class):
+    assert issubclass(block_class, FrontEndBlock)

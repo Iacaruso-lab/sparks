@@ -1,18 +1,17 @@
 import pytest
 import torch
 
-from sparks.models.attention.calcium import FullCalciumAttentionLayer, LightCalciumAttentionLayer
+from sparks.models.attention.calcium import CalciumAttentionLayer
 from sparks.models.attention.ephys import FullEphysAttentionLayer, LightEphysAttentionLayer
 
 from helpers import BATCH, EMBED_DIM, N_NEURONS, N_TIMESTEPS
 
-LAYER_CLASSES = [FullEphysAttentionLayer, LightEphysAttentionLayer,
-                 FullCalciumAttentionLayer, LightCalciumAttentionLayer]
+LAYER_CLASSES = [FullEphysAttentionLayer, LightEphysAttentionLayer, CalciumAttentionLayer]
 
 
 def make_inputs(layer_class):
     """Binary spikes for ephys layers, continuous fluorescence-like traces for calcium layers."""
-    if layer_class in (FullCalciumAttentionLayer, LightCalciumAttentionLayer):
+    if layer_class is CalciumAttentionLayer:
         return torch.rand(BATCH, N_TIMESTEPS, N_NEURONS)
     return torch.bernoulli(torch.full((BATCH, N_TIMESTEPS, N_NEURONS), 0.2))
 
@@ -86,8 +85,8 @@ def test_layers_reject_settings_they_do_not_use(layer_class):
         layer_class(n_neurons=N_NEURONS, embed_dim=EMBED_DIM, **{unused: 1})
 
 
-@pytest.mark.parametrize('layer_class', [FullCalciumAttentionLayer, LightCalciumAttentionLayer])
-def test_calcium_tau_s_scales_the_timescales(layer_class):
+def test_calcium_tau_s_scales_the_timescales():
+    layer_class = CalciumAttentionLayer
     default = layer_class(n_neurons=N_NEURONS, embed_dim=EMBED_DIM)
     slower = layer_class(n_neurons=N_NEURONS, embed_dim=EMBED_DIM, tau_s=2.)
 
@@ -100,12 +99,18 @@ def test_calcium_tau_s_scales_the_timescales(layer_class):
     assert not torch.allclose(slower.stdp_forward(x), default.stdp_forward(x))
 
 
-def test_calcium_checkpoints_keep_their_timescales():
-    """The timescales are a buffer, so a checkpoint reproduces the model it was saved from."""
-    saved = LightCalciumAttentionLayer(n_neurons=N_NEURONS, embed_dim=EMBED_DIM, tau_s=2.)
-    loaded = LightCalciumAttentionLayer(n_neurons=N_NEURONS, embed_dim=EMBED_DIM)
+@pytest.mark.parametrize('layer_class', LAYER_CLASSES)
+def test_checkpoints_reproduce_the_saved_layer(layer_class):
+    """Settings like tau_s are buffers, so a loaded checkpoint keeps the ones it was trained with."""
+    saved = layer_class(n_neurons=N_NEURONS, embed_dim=EMBED_DIM, tau_s=2.)
+    loaded = layer_class(n_neurons=N_NEURONS, embed_dim=EMBED_DIM)
 
     loaded.load_state_dict(saved.state_dict())
 
-    x = make_inputs(LightCalciumAttentionLayer)
+    x = make_inputs(layer_class)
     torch.testing.assert_close(loaded.stdp_forward(x), saved.stdp_forward(x))
+
+
+def test_calcium_tau_s_must_be_positive():
+    with pytest.raises(ValueError):
+        CalciumAttentionLayer(n_neurons=N_NEURONS, embed_dim=EMBED_DIM, tau_s=0.)

@@ -5,9 +5,10 @@ import torch.nn.functional as F
 from sparks.models.configs import HebbianAttentionConfig, SharedConfig
 from sparks.models.decoders import MLPDecoder
 from sparks.models.encoders import HebbianEncoder
+from sparks.models.state import CarriedState
 
 
-class SPARKS(torch.nn.Module):
+class SPARKS(CarriedState):
     """
     SPARKS model class.
     SPARKS is a VAE-based model designed for neural data.
@@ -37,7 +38,6 @@ class SPARKS(torch.nn.Module):
         self.latent_dim = latent_dim
         self.embed_dim = embed_dim
         self.bottleneck_dim = bottleneck_dim
-        self._carried_z_tail = {}  # session_id (str) -> last (tau_p - 1) latents, for pad_z
 
         if isinstance(n_neurons_per_session, int):
             n_neurons_per_session = [n_neurons_per_session]
@@ -87,60 +87,39 @@ class SPARKS(torch.nn.Module):
                carry_state: bool = False) -> Tuple[torch.Tensor, torch.Tensor,
                                                     torch.Tensor, torch.Tensor]:
         """
-        The forward pass of the autoencoder.
-
-        The steps of the forward pass are:
-        1. Compute the latent representation of the input.
-        2. Stack the latent representation in the encoder_outputs buffer of length tau_p.
-        3. Obtain the prediction of the decoder.
+        Encodes a session's spikes into latents, and decodes each timestep's window of the last
+        tau_p latents into a prediction of the next tau_f targets.
 
         Args:
-            inputs (torch.tensor): The input data tensor.
-            encoder_outputs (torch.tensor): The collection of past encoder output tensors.
-            session_id (int, optional): The session id. Default is 0.
-            carry_state (bool): If True, the encoder's Hebbian attention/Perceiver recurrent
-                state -- and, if tau_p > 1, the decoder's sliding-window tail -- carry forward
-                from this session's previous forward() call instead of starting from zero/being
-                zero-padded, so a long recording can be processed as consecutive chunks with
-                continuous dynamics throughout. See HebbianEncoder.forward and pad_z. Call
-                reset_state() before the first chunk of a new, unrelated sequence. Default is
-                False (matches the original per-call-independent behavior).
+            x (torch.Tensor): [B, T, N] spikes of the session's neurons.
+            session_id (Union[str, int]): The session the spikes come from.
+            carry_state (bool): If True, the encoder's recurrent state (Hebbian attention and
+                Perceiver) and, if tau_p > 1, the decoder's window of past latents carry over from
+                this session's previous carrying call instead of starting from zero, so that a long
+                recording can be processed as consecutive chunks with continuous dynamics (see
+                `CarriedState`). Call reset_state() before the first chunk of a new, unrelated
+                sequence. Default is False.
 
         Returns:
-            encoder_outputs (torch.tensor): The encoder outputs tensor with the newly computed encoder output appended.
-            decoder_outputs (torch.tensor): The output tensor of the decoder.
-            mu (torch.tensor): The mean of the latent distribution computed by the encoder.
-            logvar (torch.tensor): The log-variance of the latent distribution computed by the encoder.
+            z (torch.Tensor): [B, T, latent_dim], the latents: samples from the posterior in train
+                mode, its mean in eval mode (see HebbianEncoder.reparametrize).
+            decoder_outputs (torch.Tensor): [B, T, output_dim * tau_f], the decoder's predictions.
+            mu (torch.Tensor): [B, T, latent_dim], the mean of the latents' posterior.
+            logvar (torch.Tensor): [B, T, latent_dim], the log-variance of the latents' posterior.
         """
 
         mu, logvar = self.encoder(x.float().to(self.device), session_id, carry_state=carry_state)
         enc_outputs = self.encoder.reparametrize(mu, logvar)
 
         sid = str(session_id)
-        prev_tail = self._carried_z_tail.get(sid) if carry_state else None
+        prev_tail = self.load_carried_state(sid, carry_state)  # the previous chunk's last tau_p - 1 latents
         decoder_outputs = self.decoder(self.pad_z(enc_outputs, prev_tail=prev_tail), session_id)
 
         if carry_state and self.tau_p > 1:
             tail_source = enc_outputs if prev_tail is None else torch.cat([prev_tail, enc_outputs], dim=1)
-            self._carried_z_tail[sid] = tail_source[:, -(self.tau_p - 1):].detach()
+            self.store_carried_state(sid, tail_source[:, -(self.tau_p - 1):], carry_state)
 
         return enc_outputs, decoder_outputs, mu, logvar
-
-    def reset_state(self, session_id: Optional[Union[str, int]] = None) -> None:
-        """
-        Clears carried recurrent state (see forward's `carry_state`). Call before the first
-        chunk of a new, unrelated sequence.
-
-        Args:
-            session_id: If given, resets only that session's encoder state. If None (default),
-                resets every session's.
-        """
-        self.encoder.reset_state(session_id)
-
-        if session_id is None:
-            self._carried_z_tail.clear()
-        else:
-            self._carried_z_tail.pop(str(session_id), None)
 
     def generate(self, z: torch.Tensor, session_id: Union[str, int]) -> torch.Tensor:
         """
@@ -231,7 +210,8 @@ class SPARKS(torch.nn.Module):
 
         The new session gets its own Hebbian attention layer(s) and Perceiver neuron identity in
         the shared Hebbian attention block and, if the decoder has one output head per session,
-        its own output head. Everything else is shared with the existing sessions.
+        its own output head (any decoder with an `add_session(session_id, output_dim)` method,
+        unless its `joint_decoder` is True). Everything else is shared with the existing sessions.
 
         Args:
             n_neurons (int): The number of input neurons for the new session.
@@ -242,24 +222,19 @@ class SPARKS(torch.nn.Module):
                 custom decoder).
             **hebbian_overrides: Settings of the new session's own Hebbian attention layer(s),
                 e.g. `tau_s=0.5` or `data_type='calcium'` (see
-                `HebbianAttentionBlock.add_hebbian_layer` for the full list). Any setting not
+                `HebbianAttentionBlock.add_session` for the full list). Any setting not
                 given is inherited from the model.
         """
-        has_session_heads = (hasattr(self.decoder, 'out_layers')
-                             and not getattr(self.decoder, 'joint_decoder', True))
+        has_session_heads = (hasattr(self.decoder, 'add_session')
+                             and not getattr(self.decoder, 'joint_decoder', False))
         if has_session_heads and new_output_dim is None:
             raise ValueError("`new_output_dim` is required: the decoder has one output head per session.")
         if not has_session_heads and new_output_dim is not None:
             raise ValueError("`new_output_dim` can only be given when the decoder has one output head per "
                              "session, which this (joint or custom) decoder doesn't.")
 
-        self.encoder.add_neural_block(n_neurons=n_neurons, session_id=session_id, **hebbian_overrides)
+        self.encoder.add_session(n_neurons=n_neurons, session_id=session_id, **hebbian_overrides)
 
         if has_session_heads:
-            # Read the width the new head needs off an existing one, rather than off the decoder's
-            # hidden stack: every decoder in sparks.models.decoders owns `out_layers`, but only
-            # `MLPDecoder` has a `layers` attribute.
-            in_features = next(iter(self.decoder.out_layers.values())).in_features
-            self.decoder.out_layers[str(session_id)] = torch.nn.Linear(in_features,
-                                                                       new_output_dim * self.tau_f).to(self.device)
+            self.decoder.add_session(session_id, new_output_dim * self.tau_f)
     

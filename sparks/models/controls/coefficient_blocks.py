@@ -1,24 +1,23 @@
 import math
-from typing import Dict, Optional, Sequence, Tuple, Union
+from abc import abstractmethod
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import torch
 import torch.nn.functional as F
 from torch import nn
 
-from sparks.models.controls.base import ControlBlockBase, tau_s_per_head
 from sparks.models.controls.functional import ema_correlation
-from sparks.models.layers import DropPath, FeedForward
-from sparks.models.perceiver import PerceiverBlock
+from sparks.models.front_end import PerceiverFrontEnd, tau_s_per_head
 from sparks.models.scan import parallel_affine_scan
-from sparks.models.utils import detach_state
 
 
-class CoefficientAttentionBlock(ControlBlockBase):
+class CoefficientAttentionBlock(PerceiverFrontEnd):
     """
     Shared scaffolding for controls that compute a [B, T, N, N] per-timestep coefficient matrix
     over pairs of neurons and feed it through the same v_proj (Linear(N, D) directly on the
-    matrix -- the winning design from the ablation in DenseHebbianAttentionLayer) + FeedForward +
-    PerceiverBlock bottleneck as the main model's HebbianAttentionBlock. The *only* thing that
+    matrix -- the winning design from the ablation in HebbianAttentionLayer) + FeedForward +
+    PerceiverBlock bottleneck as the main model's HebbianAttentionBlock, both inheriting it from
+    PerceiverFrontEnd. The *only* thing that
     differs between a subclass of this and the real Hebbian attention block is how the
     coefficient matrix is computed (see compute_coefficients) -- everything downstream is
     identical, so this stays a properly controlled ablation rather than changing several things
@@ -30,7 +29,7 @@ class CoefficientAttentionBlock(ControlBlockBase):
 
     Like HebbianAttentionBlock, this is now a *shared* block across sessions: v_proj (sized by
     each session's own n_neurons) is session-specific, but head_proj/ff/perceiver are shared. New
-    sessions are added via add_hebbian_layer instead of building a whole new block.
+    sessions are added via add_session instead of building a whole new block.
     """
     def __init__(self,
                  n_neurons_per_session: Dict[str, int],
@@ -54,20 +53,13 @@ class CoefficientAttentionBlock(ControlBlockBase):
             str(session_id): nn.ModuleList([nn.Linear(n, embed_dim) for _ in self.tau_s_per_head])
             for session_id, n in n_neurons_per_session.items()
         })
-        if self.n_coeff_heads > 1:
-            self.head_proj = nn.Linear(self.n_coeff_heads * embed_dim, embed_dim)
+        self._init_readout(n_neurons_per_session, embed_dim, bottleneck_dim, n_embedding_heads=self.n_coeff_heads,
+                           n_heads=n_heads, dropout=dropout, drop_path=drop_path)
 
-        self.ff = FeedForward(embed_dim, embed_dim, dropout=dropout)
-        self.drop_path = DropPath(drop_path)
-        self.perceiver = PerceiverBlock(n_neurons_per_session=n_neurons_per_session, embed_dim=embed_dim,
-                                        bottleneck_dim=bottleneck_dim, n_heads=n_heads,
-                                        dropout=dropout, drop_path=drop_path)
-        self._carried_state = {}  # session_id (str) -> list of per-head states
-
-    def add_hebbian_layer(self, n_neurons: int, session_id: Union[str, int], **overrides) -> None:
+    def add_session(self, n_neurons: int, session_id: Union[str, int], **overrides) -> None:
         """
         Adds a new session's v_proj head(s) and Perceiver neuron identity, matching
-        HebbianAttentionBlock.add_hebbian_layer. head_proj/ff/perceiver's shared parts are left
+        HebbianAttentionBlock.add_session. head_proj/ff/perceiver's shared parts are left
         untouched. Every session shares the same tau_s and dt here, so no per-session setting
         can be overridden.
         """
@@ -78,44 +70,39 @@ class CoefficientAttentionBlock(ControlBlockBase):
             raise ValueError(f"{type(self).__name__} uses the same settings for every session, so they "
                              f"can't be overridden per session (got {sorted(overrides)}).")
 
-        device = next(self.parameters()).device
+        # Same device and dtype as the rest of the block.
         self.v_proj[sid] = nn.ModuleList([nn.Linear(n_neurons, self.embed_dim)
-                                          for _ in self.tau_s_per_head]).to(device)
+                                          for _ in self.tau_s_per_head]).to(next(self.parameters()))
         self.perceiver.add_session(n_neurons, sid)
 
+    @abstractmethod
     def compute_coefficients(self, spikes: torch.Tensor, session_id: str, head: int = 0, state=None):
         """
         Returns (coefficients [B, T, N, N], new_state) for the head-th timescale
-        (self.tau_s_per_head[head]) of the given session -- implemented by subclasses.
+        (self.tau_s_per_head[head]) of the given session.
         """
-        raise NotImplementedError
+
+    def _all_coefficients(self, spikes: torch.Tensor, session_id: str, carry_state: bool) -> List[torch.Tensor]:
+        """Every head's coefficients, starting from (and storing) the carried state when carrying."""
+        states = self.load_carried_state(session_id, carry_state) or [None] * self.n_coeff_heads
+        coeffs, new_states = zip(*[self.compute_coefficients(spikes, session_id, head=head, state=states[head])
+                                   for head in range(self.n_coeff_heads)])
+        self.store_carried_state(session_id, list(new_states), carry_state)
+        return list(coeffs)
 
     def forward(self, spikes: torch.Tensor, session_id: Union[str, int], carry_state: bool = False) -> torch.Tensor:
         sid = str(session_id)
-        states = self._carried_state.get(sid) if carry_state else None
-        if states is None:
-            states = [None] * self.n_coeff_heads
+        coeffs = self._all_coefficients(spikes, sid, carry_state)
+        head_embeddings = [v_proj(head_coeffs) for v_proj, head_coeffs in zip(self.v_proj[sid], coeffs)]  # [B, T, N, D]
+        return self._readout(head_embeddings, sid, carry_state)  # [B, T, bottleneck_dim * D]
 
-        head_outs, new_states = [], []
-        for head in range(self.n_coeff_heads):
-            coeffs, new_state = self.compute_coefficients(spikes, sid, head=head, state=states[head])
-            new_states.append(detach_state(new_state))
-            head_outs.append(self.v_proj[sid][head](coeffs))  # [B, T, N, D]
-        if carry_state:
-            self._carried_state[sid] = new_states
-
-        x = self.head_proj(torch.cat(head_outs, dim=-1)) if self.n_coeff_heads > 1 else head_outs[0]
-        ffn_out = self.ff(x)
-        x = x + self.drop_path(ffn_out)
-
-        return self.perceiver(x, sid, carry_state=carry_state)  # [B, T, bottleneck_dim * D]
-
-    def reset_state(self, session_id: Optional[Union[str, int]] = None):
-        if session_id is None:
-            self._carried_state = {}
-        else:
-            self._carried_state.pop(str(session_id), None)
-        self.perceiver.reset_state(session_id)
+    def hebbian_forward(self, spikes: torch.Tensor, session_id: Union[str, int], carry_state: bool = False) -> torch.Tensor:
+        """
+        The [B, T, N, N] coefficients, or [n_heads, B, T, N, N] with several heads, as for
+        HebbianAttentionBlock.hebbian_forward.
+        """
+        coeffs = self._all_coefficients(spikes, str(session_id), carry_state)
+        return coeffs[0] if self.n_coeff_heads == 1 else torch.stack(coeffs, dim=0)
 
 
 class SymmetricHebbianAttentionBlock(CoefficientAttentionBlock):
@@ -159,15 +146,18 @@ class SymmetricHebbianAttentionBlock(CoefficientAttentionBlock):
         for session_id, n_neurons in n_neurons_per_session.items():
             self._add_session_latents(n_neurons, session_id)
 
-    def _add_session_latents(self, n_neurons: int, session_id: Union[str, int]):
+    def _add_session_latents(self, n_neurons: int, session_id: Union[str, int], like: Optional[torch.Tensor] = None):
+        """Creates the session's latent parameters, on the device and with the dtype of `like` if given."""
         init = math.log(math.exp(1.0) - 1.0)
         sid = str(session_id)
-        self.latent_delta[sid] = nn.Parameter(torch.full((self.n_coeff_heads, 1, n_neurons), init))
-        self.latent_w[sid] = nn.Parameter(torch.full((self.n_coeff_heads, 1, n_neurons), init))
+        options = {} if like is None else dict(device=like.device, dtype=like.dtype)
+        self.latent_delta[sid] = nn.Parameter(torch.full((self.n_coeff_heads, 1, n_neurons), init, **options))
+        self.latent_w[sid] = nn.Parameter(torch.full((self.n_coeff_heads, 1, n_neurons), init, **options))
 
-    def add_hebbian_layer(self, n_neurons: int, session_id: Union[str, int], **overrides) -> None:
-        super().add_hebbian_layer(n_neurons, session_id, **overrides)
-        self._add_session_latents(n_neurons, session_id)
+    def add_session(self, n_neurons: int, session_id: Union[str, int], **overrides) -> None:
+        reference = next(self.parameters())
+        super().add_session(n_neurons, session_id, **overrides)
+        self._add_session_latents(n_neurons, session_id, like=reference)
 
     def get_parameters(self, session_id: str, head: int = 0):
         decay = torch.exp(-F.softplus(self.latent_delta[session_id][head]) * (self.dt / self.tau_s[head]))  # [1, N], in (0, 1)

@@ -1,4 +1,4 @@
-from typing import Dict, Optional, Union
+from typing import Dict, Union
 
 import numpy as np
 import torch
@@ -7,10 +7,10 @@ from torch import nn
 
 from sparks.models.layers import DropPath, FeedForward
 from sparks.models.scan import parallel_affine_scan
-from sparks.models.utils import detach_state
+from sparks.models.state import CarriedState
 
 
-class PerceiverBlock(nn.Module):
+class PerceiverBlock(CarriedState):
     def __init__(self, n_neurons_per_session: Dict[str, int], embed_dim, bottleneck_dim, n_heads=1,
                  dropout=0., drop_path=0.):
         super().__init__()
@@ -58,10 +58,9 @@ class PerceiverBlock(nn.Module):
         self.ffn = FeedForward(embed_dim, embed_dim, dropout=dropout)
         self.norm1 = nn.LayerNorm(embed_dim)
         self.drop_path = DropPath(drop_path)
-        self._carried_state = {}  # session_id (str) -> linear-attention KV state, see forward
 
-    def _init_neuron_identity(self, n_neurons: int, session_id: Union[str, int], device=None):
-        param = nn.Parameter(torch.empty(1, 1, n_neurons, self.embed_dim, device=device))
+    def _init_neuron_identity(self, n_neurons: int, session_id: Union[str, int], device=None, dtype=None):
+        param = nn.Parameter(torch.empty(1, 1, n_neurons, self.embed_dim, device=device, dtype=dtype))
         nn.init.trunc_normal_(param, std=1/np.sqrt(self.embed_dim))
         self.neuron_identity[str(session_id)] = param
 
@@ -70,18 +69,7 @@ class PerceiverBlock(nn.Module):
         sid = str(session_id)
         if sid in self.neuron_identity:
             raise ValueError(f"Session ID '{sid}' already exists in this Perceiver block.")
-        self._init_neuron_identity(n_neurons, sid, device=self.latents.device)
-
-    def reset_state(self, session_id: Optional[Union[str, int]] = None):
-        """
-        Args:
-            session_id: If given, clears only that session's carried linear-attention state.
-                If None (default), clears every session's carried state.
-        """
-        if session_id is None:
-            self._carried_state = {}
-        else:
-            self._carried_state.pop(str(session_id), None)
+        self._init_neuron_identity(n_neurons, sid, device=self.latents.device, dtype=self.latents.dtype)
 
     def _linear_attn_readout(self, x, state=None):
         """
@@ -141,10 +129,9 @@ class PerceiverBlock(nn.Module):
 
         # Recurrent readout: latents (Q) attend to a KV state decayed and accumulated over
         # time, instead of independently re-reading the neuron population at every timestep.
-        state = self._carried_state.get(sid) if carry_state else None
+        state = self.load_carried_state(sid, carry_state)
         attn_out, new_state = self._linear_attn_readout(x, state=state)  # Shape: [B*T, bottleneck_dim, D]
-        if carry_state:
-            self._carried_state[sid] = detach_state(new_state)
+        self.store_carried_state(sid, new_state, carry_state)
 
         latents = latents_expanded + self.drop_path(attn_out)  # Residual connection around cross attention
 

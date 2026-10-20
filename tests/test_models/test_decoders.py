@@ -22,10 +22,10 @@ def test_mlp_decoder():
     # Test forward pass for each session
     x = torch.randn(batch_size, in_dim)
 
-    output1 = decoder(x, sess_id=0)
+    output1 = decoder(x, session_id=0)
     assert output1.shape == (batch_size, 10)
 
-    output2 = decoder(x, sess_id=1)
+    output2 = decoder(x, session_id=1)
     assert output2.shape == (batch_size, 20)
 
 
@@ -46,10 +46,10 @@ def test_linear_decoder():
 
     x = torch.randn(batch_size, in_dim)
 
-    output1 = decoder(x, sess_id=0)
+    output1 = decoder(x, session_id=0)
     assert output1.shape == (batch_size, 5)
     
-    output2 = decoder(x, sess_id=1)
+    output2 = decoder(x, session_id=1)
     assert output2.shape == (batch_size, 10)
 
 
@@ -59,7 +59,7 @@ def test_joint_mlp_decoder_shares_one_head():
     decoder = MLPDecoder(in_dim=16, hidden_dims=[8], output_dim_per_session=5, joint_decoder=True)
     x = torch.randn(4, 16)
 
-    assert decoder(x, sess_id=0).shape == decoder(x, sess_id=1).shape == (4, 5)
+    assert decoder(x, session_id=0).shape == decoder(x, session_id=1).shape == (4, 5)
 
 
 def test_mlp_decoder_starts_at_base_rate():
@@ -69,7 +69,7 @@ def test_mlp_decoder_starts_at_base_rate():
 
     decoder = MLPDecoder(in_dim=16, hidden_dims=[8], output_dim_per_session=[5], base_rate=0.1)
 
-    probs = torch.sigmoid(decoder(torch.randn(4, 16), sess_id=0))
+    probs = torch.sigmoid(decoder(torch.randn(4, 16), session_id=0))
 
     torch.testing.assert_close(probs, torch.full((4, 5), 0.1))
 
@@ -80,8 +80,8 @@ def test_transformer_decoder():
     decoder = TransformerDecoder(embed_dim=8, output_dim_per_session=[5, 6], n_heads=2, id_per_session=[0, 1])
     x = torch.randn(4, 12, 8)
 
-    assert decoder(x, sess_id=0).shape == (4, 12, 5)
-    assert decoder(x, sess_id=1).shape == (4, 12, 6)
+    assert decoder(x, session_id=0).shape == (4, 12, 5)
+    assert decoder(x, session_id=1).shape == (4, 12, 6)
 
 
 def test_transformer_decoder_default_session_ids():
@@ -89,4 +89,27 @@ def test_transformer_decoder_default_session_ids():
 
     decoder = TransformerDecoder(embed_dim=8, output_dim_per_session=[5, 6])
 
-    assert decoder(torch.randn(4, 12, 8), sess_id=1).shape == (4, 12, 6)
+    assert decoder(torch.randn(4, 12, 8), session_id=1).shape == (4, 12, 6)
+
+
+def test_added_session_heads_start_like_the_others():
+    from sparks.models.decoders import MLPDecoder
+
+    decoder = MLPDecoder(in_dim=16, hidden_dims=8, output_dim_per_session=[5], base_rate=0.1)
+
+    decoder.add_session('new', output_dim=3)
+
+    probs = torch.sigmoid(decoder(torch.randn(4, 16), session_id='new'))
+    torch.testing.assert_close(probs, torch.full((4, 3), 0.1))
+
+
+def test_decoder_add_session_errors():
+    import pytest
+
+    from sparks.models.decoders import LinearDecoder
+
+    per_session = LinearDecoder(in_dim=16, output_dim_per_session=[5])
+    with pytest.raises(ValueError):  # duplicate session
+        per_session.add_session(0, output_dim=3)
+    with pytest.raises(ValueError):  # one head serves every session
+        LinearDecoder(in_dim=16, output_dim_per_session=5, joint_decoder=True).add_session(1, output_dim=3)
