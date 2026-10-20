@@ -10,13 +10,22 @@ from sparks.training.losses import GaussianTransition
 
 def get_lr_multiplier(current_step, warmup_steps, total_steps, min_lr=0.0):
     """
-    Returns a multiplier from 0.0 to 1.0 that modifies the peak learning rate.
+    The learning-rate schedule: a linear warmup from 0 to 1 over `warmup_steps`, then a cosine
+    decay from 1 to 0 at `total_steps`, floored at `min_lr`. Use it as the lr_lambda of a
+    torch.optim.lr_scheduler.LambdaLR stepped after every batch.
+
+    Args:
+        current_step (int): The number of optimizer steps taken so far.
+        warmup_steps (int): The length of the warmup, in steps.
+        total_steps (int): The total number of steps of training.
+        min_lr (float): The lowest multiplier after the warmup. Default is 0.
+
+    Returns:
+        float: The multiplier of the optimizer's learning rate.
     """
-    # Phase 1: Linear Warmup (from 0 to 1)
     if current_step < warmup_steps:
         return float(current_step) / float(max(1, warmup_steps))
-    
-    # Phase 2: Cosine Decay (from 1 down to 0)
+
     progress = float(current_step - warmup_steps) / float(max(1, total_steps - warmup_steps))
     
     return max(min_lr, 0.5 * (1.0 + math.cos(math.pi * progress)))
@@ -39,9 +48,10 @@ def build_param_groups(model: torch.nn.Module, weight_decay: float = 0.1,
         weight_decay: Weight decay coefficient for the "decay" group. The "no_decay" group
             always gets weight_decay=0.0.
         kl_type: 'standard' or 'sequential' (see `sparks.training.losses.kl_divergence`). When
-            'sequential', a `GaussianTransition` module over `model.latent_dim` is created here
-            and its parameters are folded into the returned groups, so the transition gets
-            trained by the same optimizer as `model`. Default is 'standard'.
+            'sequential', a `GaussianTransition` module over `model.latent_dim` is created here,
+            on the model's device and dtype, and its parameters are folded into the returned
+            groups, so the transition gets trained by the same optimizer as `model`. Default is
+            'standard'.
         transition_hidden: Hidden width for the `GaussianTransition`, forwarded as its `hidden`
             argument. Only used when kl_type == 'sequential'. Default is None (2 * latent_dim).
 
@@ -70,7 +80,8 @@ def build_param_groups(model: torch.nn.Module, weight_decay: float = 0.1,
         latent_dim = getattr(model, 'latent_dim', None)
         if latent_dim is None:
             raise ValueError("kl_type='sequential' requires `model.latent_dim` to be set.")
-        transition = GaussianTransition(latent_dim, hidden=transition_hidden)
+        reference = next(model.parameters())
+        transition = GaussianTransition(latent_dim, hidden=transition_hidden).to(reference.device, reference.dtype)
         _sort_into(transition.named_parameters(), decay, no_decay)
     elif kl_type != 'standard':
         raise ValueError(f"kl_type must be 'standard' or 'sequential', got {kl_type!r}.")
@@ -90,9 +101,8 @@ def measure_grad_norm(model: torch.nn.Module) -> Dict[str, float]:
     holding the combined L2 norm across all of them -- call this after loss.backward() (on your
     real batch and loss_fn) and before zero_grad().
 
-    Use this to calibrate `max_val` in `clip_and_step`/clip_grad_norm_ before training: that
-    function switched from per-element clipping (clip_grad_value_, where the threshold doesn't
-    depend on model size) to global-norm clipping (clip_grad_norm_, where it does). A max_val set
+    Use this to calibrate `max_val` in `clip_and_step` before training: it clips the global norm
+    of the gradients (clip_grad_norm_), whose natural scale depends on the model's size. A max_val set
     far below the 'total' value here doesn't clip outliers, it rescales *every* update down by
     max_val / grad_norm -- e.g. a healthy-looking model can easily have a total gradient norm in
     the tens of thousands, and clip_grad_norm_(max_norm=1.0) against that crushes every step to

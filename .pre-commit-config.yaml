@@ -1,0 +1,21 @@
+# Run `pre-commit install` once after cloning; the hooks then run on every commit. CI runs them too.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.1
+    hooks:
+      - id: ruff-check
+  - repo: https://github.com/kynan/nbstripout
+    rev: 0.8.2  # the last release supporting Python 3.9
+    hooks:
+      - id: nbstripout  # commits notebooks without their outputs
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-executables-have-shebangs
+      - id: check-merge-conflict
+      - id: check-shebang-scripts-are-executable
+      - id: check-toml
+      - id: check-yaml
+      - id: debug-statements
+      - id: detect-private-key

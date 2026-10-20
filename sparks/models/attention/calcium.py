@@ -112,7 +112,7 @@ class CalciumAttentionLayer(HebbianAttentionLayer):
             state: Optional ca_trace tensor from the end of a previous chunk, used as the initial
                 condition instead of zeros -- lets a long recording be processed in consecutive
                 chunks with a continuous (rather than reset-per-chunk) trace. Default is None
-                (start from zero, as before).
+                (start from zero).
         Returns:
             score: torch.Tensor of shape [batch_size, T, n_neurons, n_neurons], the STDP coefficients.
             new_state: ca_trace at the end of this chunk, to pass as `state` for the next chunk.

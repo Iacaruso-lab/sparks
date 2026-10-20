@@ -1,0 +1,34 @@
+cff-version: 1.2.0
+message: "If you use sparks-ai, please cite the paper below."
+title: "sparks-ai"
+type: software
+authors:
+  - family-names: Skatchkovsky
+    given-names: Nicolas
+license: GPL-3.0-or-later
+repository-code: "https://github.com/FrancisCrickInstitute/sparks"
+url: "https://franciscrickinstitute.github.io/sparks-ai/"
+keywords:
+  - computational neuroscience
+  - spiking data
+  - Hebbian learning
+  - attention
+  - variational autoencoder
+preferred-citation:
+  type: article
+  title: "A Biologically Inspired Attention Model for Neural Signal Analysis"
+  authors:
+    - family-names: Skatchkovsky
+      given-names: Nicolas
+    - family-names: Glazman
+      given-names: Natalia
+    - family-names: Egea-Weiss
+      given-names: Alexander
+    - family-names: Sadeh
+      given-names: Sadra
+    - family-names: Iacaruso
+      given-names: Florencia
+  journal: "bioRxiv"
+  doi: "10.1101/2024.08.13.607787"
+  year: 2024
+  month: 8

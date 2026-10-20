@@ -20,6 +20,9 @@ class SessionHeadsDecoder(nn.Module):
         if joint_decoder:
             self.out_layers = self._new_head(in_dim, int(output_dim_per_session))
         else:
+            if isinstance(output_dim_per_session, (int, np.integer)):  # the same for every session
+                n_sessions = 1 if id_per_session is None else len(id_per_session)
+                output_dim_per_session = [int(output_dim_per_session)] * n_sessions
             if id_per_session is None:
                 id_per_session = np.arange(len(output_dim_per_session))
             self.out_layers = nn.ModuleDict({str(session_id): self._new_head(in_dim, output_dim)
@@ -71,7 +74,7 @@ class MLPDecoder(_BaseRateHeadsDecoder):
             in_dim (int): The input dimension.
             hidden_dims (Union[int, Sequence[int]]): The width of each hidden layer.
             output_dim_per_session (Union[int, Sequence[int]]): The output dimension of each
-                session's head, or of the joint head.
+                session's head (an int gives every session the same one), or of the joint head.
             id_per_session (Sequence[Union[str, int]], optional): The session of each output
                 dimension. Default is None (0, 1, ...).
             joint_decoder (bool): If True, uses a single output head for every session. Default

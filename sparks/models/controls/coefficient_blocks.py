@@ -23,13 +23,13 @@ class CoefficientAttentionBlock(PerceiverFrontEnd):
     identical, so this stays a properly controlled ablation rather than changing several things
     at once.
 
-    As in HebbianAttentionBlock, `tau_s` may be a single float (one head, unchanged) or a list,
+    As in HebbianAttentionBlock, `tau_s` may be a single float (one head) or a list,
     which gives one independent head per timescale -- each with its own coefficient matrix, its own
     recurrent state and its own v_proj -- concatenated and projected back to embed_dim.
 
-    Like HebbianAttentionBlock, this is now a *shared* block across sessions: v_proj (sized by
-    each session's own n_neurons) is session-specific, but head_proj/ff/perceiver are shared. New
-    sessions are added via add_session instead of building a whole new block.
+    Like HebbianAttentionBlock, one block serves every session: v_proj (sized by each session's
+    own n_neurons) is session-specific, while head_proj/ff/perceiver are shared. New sessions are
+    added with add_session.
     """
     def __init__(self,
                  n_neurons_per_session: Dict[str, int],

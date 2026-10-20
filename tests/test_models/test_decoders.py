@@ -113,3 +113,13 @@ def test_decoder_add_session_errors():
         per_session.add_session(0, output_dim=3)
     with pytest.raises(ValueError):  # one head serves every session
         LinearDecoder(in_dim=16, output_dim_per_session=5, joint_decoder=True).add_session(1, output_dim=3)
+
+
+def test_decoder_int_output_dim_is_shared_by_every_session():
+    from sparks.models.decoders import LinearDecoder
+
+    single = LinearDecoder(in_dim=4, output_dim_per_session=3)
+    several = LinearDecoder(in_dim=4, output_dim_per_session=3, id_per_session=['a', 'b'])
+
+    assert single(torch.randn(2, 4)).shape == (2, 3)
+    assert several(torch.randn(2, 4), session_id='b').shape == (2, 3)

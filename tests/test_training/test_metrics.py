@@ -72,3 +72,17 @@ def test_cosmoothing_r2_on_linear_data():
 
     assert preds.shape == (200, 3)
     assert score == pytest.approx(1., abs=1e-4)
+
+
+def test_bits_per_spike_null_model_is_per_neuron_for_flattened_inputs(poisson_data):
+    rates, spikes = poisson_data
+    flat_rates, flat_spikes = rates.reshape(-1, 6), spikes.reshape(-1, 6)
+
+    assert bits_per_spike(flat_rates, flat_spikes) == pytest.approx(bits_per_spike(rates, spikes))
+
+
+def test_cosmoothing_rejects_unknown_metric():
+    latents = np.random.randn(20, 2)
+
+    with pytest.raises(ValueError):
+        evaluate_cosmoothing(latents, latents, metric='unknown')

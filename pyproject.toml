@@ -10,7 +10,7 @@ authors = [
 ]
 
 keywords = ["Computational neuroscience", "Artificial Intelligence", "GenAI"]
-description = "Sequential Predictive Attention for the Representation of SpiKing Signals"
+description = "Sequential Predictive Autoencoder for the Representation of spiKing Signals"
 readme = "README.md"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE.md", "THIRD_PARTY_NOTICES.md"]
@@ -20,6 +20,11 @@ classifiers = ["Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
@@ -36,8 +41,8 @@ nlb = ["pynwb", "pandas"]
 # Allen calcium-imaging movies dataset, fetched through CEBRA (sparks.data.allen.datasets.AllenMoviesCaDataset)
 cebra = ["cebra"]
 all = ["sparks-ai[allen,nlb,cebra]"]
-demos = ["jupyter", "matplotlib"]
-dev = ["pytest", "ruff", "build", "twine", "tqdm"]
+demos = ["jupyter", "matplotlib", "tqdm"]
+dev = ["pytest", "ruff", "pre-commit", "build", "twine", "tqdm"]
 # MambaBlock needs mamba-ssm, which has no extra here: it must be built against the installed torch
 # and CUDA, i.e. `pip install causal-conv1d mamba-ssm --no-build-isolation`.
 
@@ -58,3 +63,9 @@ testpaths = ["tests"]
 pythonpath = ["tests"]  # lets test modules import the shared tests/helpers.py
 addopts = "-ra --strict-markers"
 xfail_strict = true  # a known-bug test that starts passing must have its xfail marker removed
+
+[tool.ruff]
+extend-exclude = ["sparks/data/nlb/nwb_interface.py"]  # vendored from nlb_tools, kept as upstream
+
+[tool.ruff.lint]
+select = ["F"]  # pyflakes: unused imports and variables, undefined names, ...

@@ -9,26 +9,55 @@ from sparks.models.layers import AttentionBlock
 @dataclass
 class HebbianAttentionConfig:
     """
-    Configuration for the Hebbian Attention Block.
+    Configuration of the encoder's front end: the Hebbian attention block, or a control block
+    replacing it (see `sparks.models.controls`).
 
     Some fields only apply to one data_type and are ignored for the other: w_plus and alpha are
     ephys-only; min_attn_value, max_attn_value and n_timescales are calcium-only.
+
+    Attributes:
+        block_class (Type[nn.Module]): The front-end block. Default is HebbianAttentionBlock.
+        tau_s (Union[float, List[float]]): One Hebbian attention head per value. Ephys: the STDP
+            time constant, in seconds. Calcium: scales the range of the trace's decay timescales
+            (10 ms to 1 s at tau_s=1). Default is 1.
+        n_heads (int): The number of heads of the Perceiver's attention. Default is 1.
+        dropout (float): Dropout probability of the block's attention and feed-forward layers.
+            Default is 0.
+        drop_path (float): Stochastic-depth probability of the block's residual branches.
+            Default is 0.
+        dt (float): The time-step of the data, in seconds. Default is 0.001.
+        w_plus (float): Ephys only: the scale of the pre-synaptic trace's spike weight. Default
+            is 0.001.
+        alpha (float): Ephys only: the post-synaptic trace's weight relative to the
+            pre-synaptic one; above 1, depression outweighs potentiation. Default is 1.1.
+        data_type (str): 'ephys' (spike trains, STDP) or 'calcium' (calcium imaging,
+            multi-timescale traces). Default is 'ephys'.
+        min_attn_value (float): Calcium only: lower bound of the fluorescence trace (the ephys
+            STDP coefficients are always clamped to EphysAttentionLayer.STDP_RANGE). Default is
+            -10.
+        max_attn_value (float): Calcium only: upper bound of the fluorescence trace. Default is
+            10.
+        n_timescales (int): Calcium only: the number of log-spaced decay timescales of the
+            fluorescence trace. Default is 5.
+        config (str): Ephys only: 'light' (trace decays fixed by tau_s, weights shared by every
+            pair of neurons) or 'full' (decays and weights learned per pair of neurons). Default
+            is 'light'.
+        params (Dict[str, Any]): Extra keyword arguments of `block_class`, overriding the fields
+            above. Default is {}.
     """
     block_class: Type[nn.Module] = HebbianAttentionBlock
-    # One Hebbian attention head per value. Ephys: the STDP time constant, in seconds. Calcium:
-    # scales the range of the trace's decay timescales (10ms-1s at tau_s=1).
     tau_s: Union[float, List[float]] = 1.0
-    n_heads: int = 1 # Number of attention heads for perceiver multi-head attention
+    n_heads: int = 1
     dropout: float = 0.
-    drop_path: float = 0. # Stochastic depth rate for the block's residual connections
-    dt: float = 0.001 # The time-step, in seconds
-    w_plus: float = 0.001 # Ephys only
-    alpha: float = 1.1 # Ephys only
-    data_type: str = 'ephys' # Type of data, can be 'ephys' or 'calcium'
-    min_attn_value: float = -10. # Calcium only: lower bound of the fluorescence trace (ephys's clamp is hardcoded)
-    max_attn_value: float = 10. # Calcium only: upper bound of the fluorescence trace
-    n_timescales: int = 5 # Calcium only: number of log-spaced decay timescales of the fluorescence trace
-    config: str = 'light' # 'full' or 'light' to specify the type of Hebbian attention block
+    drop_path: float = 0.
+    dt: float = 0.001
+    w_plus: float = 0.001
+    alpha: float = 1.1
+    data_type: str = 'ephys'
+    min_attn_value: float = -10.
+    max_attn_value: float = 10.
+    n_timescales: int = 5
+    config: str = 'light'
     params: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
@@ -60,23 +89,33 @@ class HebbianAttentionConfig:
 @dataclass
 class SharedConfig:
     """
-    Configuration for the shared blocks: the stack of sequence blocks, shared by every session,
-    between the Hebbian attention block and the latent projection (attention blocks by default,
-    or e.g. MambaBlock). There are none by default.
+    Configuration of the shared blocks: the stack of sequence blocks, shared by every session,
+    between the Hebbian attention block and the latent projection (causal attention blocks by
+    default, or e.g. MambaBlock). There are none by default.
+
+    Attributes:
+        block_class (Type[nn.Module]): The block, AttentionBlock or MambaBlock. Default is
+            AttentionBlock.
+        n_layers (int): The number of blocks. Default is 0.
+        n_heads (int): AttentionBlock only: the number of attention heads. Default is 4.
+        dropout (float): AttentionBlock only: dropout probability. Default is 0.
+        drop_path (float): Stochastic-depth probability of each block's residual branches.
+            Default is 0.
+        d_state (int): MambaBlock only: the size of the SSM state. Default is 16.
+        d_conv (int): MambaBlock only: the width of the local convolution. Default is 4.
+        expand (int): MambaBlock only: the expansion factor of the inner projections. Default
+            is 2.
+        params (Dict[str, Any]): Extra keyword arguments of `block_class`, overriding the fields
+            above. Default is {}.
     """
     block_class: Type[nn.Module] = AttentionBlock
     n_layers: int = 0
-
-    # Parameters for the attention block (if used)
     n_heads: int = 4
     dropout: float = 0.
-    drop_path: float = 0. # Stochastic depth rate for the block's residual connections
-
-    # Parameters for Mamba
+    drop_path: float = 0.
     d_state: int = 16
     d_conv: int = 4
     expand: int = 2
-
     params: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):

@@ -21,26 +21,19 @@ class AllenGratingsDataset(BaseDataset):
         """
         Trials of Allen Brain Observatory gratings, flashes or spontaneous activity.
 
-        Parameters
-        ----------
-        spikes : dict
-            The spike times of each unit, {unit_id: one array of spike times per trial}, in
-            seconds from the start of the trial.
-        conds : np.ndarray, optional
-            Each trial's target: a class label, or a vector of stimulus features. None for
-            spontaneous activity, whose target is the trial's index.
-        good_units_ids : np.ndarray
-            The units to use, in the order of the spikes' neuron axis.
-        dt : float, optional
-            Time step, in seconds. Default is 0.01.
-        trial_len : float, optional
-            Length of each trial, in seconds. Defaults to None, i.e. infer it from the
-            latest spike in the data -- pass it explicitly whenever the trials have a
-            known length (0.25 for gratings and flashes, train_len / test_len for the
-            spontaneous splits), since the inferred value depends on the spikes and so
-            can differ between an otherwise matching train and test set.
-        units_per_area : dict, optional
-            {area: the ids of that area's units}, for reference.
+        Args:
+            spikes (dict): The spike times of each unit, {unit_id: one array of spike times per
+                trial}, in seconds from the start of the trial.
+            conds (np.ndarray, optional): Each trial's target: a class label, or a vector of
+                stimulus features. None for spontaneous activity, whose target is the trial's index.
+            good_units_ids (np.ndarray): The units to use, in the order of the spikes' neuron axis.
+            dt (float, optional): Time step, in seconds. Default is 0.01.
+            trial_len (float, optional): Length of each trial, in seconds. Defaults to None, i.e.
+                infer it from the latest spike in the data -- pass it explicitly whenever the trials
+                have a known length (0.25 for gratings and flashes, train_len / test_len for the
+                spontaneous splits), since the inferred value depends on the spikes and so can
+                differ between an otherwise matching train and test set.
+            units_per_area (dict, optional): {area: the ids of that area's units}, for reference.
         """
 
         super().__init__()
@@ -96,23 +89,21 @@ class AllenMoviesDataset(BaseDataset):
         """
         Base class for presentations of Allen Brain Observatory natural movie one.
 
-        Parameters
-        ----------
-        frame_indices : torch.Tensor
-            [T], the index of the movie frame showing at each timestep of a trial.
-        mode : str, optional
-            'prediction': target is the movie frame index at each timestep, [T].
-            'reconstruction': target is `frames`, the movie frame showing at each timestep.
-            'unsupervised': target is the spikes themselves.
-            'denoising': target is another randomly chosen trial's spikes.
-        frames : torch.Tensor, optional
-            [T, ...], the movie frame showing at each timestep of a trial (see
-            `sparks.data.allen.utils.get_frames`), shared by every trial since all presentations
-            show the same movie. Required when mode == 'reconstruction'.
-
         Each __getitem__ call returns the whole recording -- to process a long recording in
         consecutive chunks (e.g. for a stateful encoder), see the `chunk_length` argument of
         sparks.training.train_on_batch.
+
+        Args:
+            frame_indices (torch.Tensor): [T], the index of the movie frame showing at each timestep
+                of a trial.
+            mode (str, optional): What the target is. Default is 'prediction'.
+                'prediction': the movie frame index at each timestep, [T].
+                'reconstruction': `frames`, the movie frame showing at each timestep.
+                'unsupervised': the spikes themselves.
+                'denoising': another randomly chosen trial's spikes.
+            frames (torch.Tensor, optional): [T, ...], the movie frame showing at each timestep of a
+                trial (see `sparks.data.allen.utils.get_frames`), shared by every trial since all
+                presentations show the same movie. Required when mode == 'reconstruction'.
         """
 
         super().__init__()
@@ -152,17 +143,12 @@ class AllenMoviesNpxDataset(AllenMoviesDataset):
         Presentations of natural movie one recorded with Neuropixels, binned into dt-sized
         timesteps.
 
-        Parameters
-        ----------
-        spikes : dict
-            The spike times of each unit, {unit_id: one array of spike times per presentation},
-            in seconds from the start of the presentation.
-        good_units_ids : np.ndarray
-            The units to use, in the order of the spikes' neuron axis.
-        dt : float, optional
-            Time step, in seconds. Default is 0.01.
-        mode, frames :
-            See AllenMoviesDataset.
+        Args:
+            spikes (dict): The spike times of each unit, {unit_id: one array of spike times per
+                presentation}, in seconds from the start of the presentation.
+            good_units_ids (np.ndarray): The units to use, in the order of the spikes' neuron axis.
+            dt (float, optional): Time step, in seconds. Default is 0.01.
+            mode, frames: See AllenMoviesDataset.
         """
         frame_indices = torch.from_numpy(get_frame_indices_per_timestep(dt)).long()
         super().__init__(frame_indices=frame_indices, mode=mode, frames=frames)
@@ -195,16 +181,13 @@ class AllenMoviesCaDataset(AllenMoviesDataset):
         datasets packaged by CEBRA (downloaded on first use; needs the `cebra` extra), at the
         movie's own 30 fps: one timestep per frame.
 
-        Parameters
-        ----------
-        n_neurons : int, optional
-            The number of neurons, one of the sizes CEBRA provides. Default is 10.
-        seed : int, optional
-            Which of CEBRA's samples of neurons to use. Default is 111.
-        train : bool, optional
-            Whether to load the train presentations, or the test ones. Default is True.
-        mode, frames :
-            See AllenMoviesDataset.
+        Args:
+            n_neurons (int, optional): The number of neurons, one of the sizes CEBRA provides.
+                Default is 10.
+            seed (int, optional): Which of CEBRA's samples of neurons to use. Default is 111.
+            train (bool, optional): Whether to load the train presentations, or the test ones.
+                Default is True.
+            mode, frames: See AllenMoviesDataset.
         """
         n_frames = int(MOVIE_LEN * MOVIE_FPS)
         super().__init__(frame_indices=torch.arange(n_frames), mode=mode, frames=frames)

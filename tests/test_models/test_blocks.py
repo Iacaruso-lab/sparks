@@ -146,3 +146,16 @@ def test_mamba_block_preserves_shape():
     x = torch.randn(BATCH, N_TIMESTEPS, 16, device='cuda')
 
     assert block(x).shape == x.shape
+
+
+def test_perceiver_latent_self_attention_is_chunked_over_large_batches(monkeypatch):
+    from sparks.models import perceiver
+
+    torch.manual_seed(0)
+    block = perceiver.PerceiverBlock({'0': 5}, embed_dim=8, bottleneck_dim=2, n_heads=2).eval()
+    x = torch.randn(2, 6, 5, 8)
+    expected = block(x, session_id=0)
+
+    monkeypatch.setattr(perceiver, '_MAX_ATTENTION_BATCH', 5)  # 12 timesteps -> chunks of 5, 5 and 2
+
+    torch.testing.assert_close(block(x, session_id=0), expected)

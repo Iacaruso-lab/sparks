@@ -10,16 +10,18 @@ from sparks.data.allen.preprocess.utils import get_correct_units
 
 def get_movies_start_stop_times_for_session(session, stim_type, n_frames=None, df=1):
     """
-    Get start and stop times for a given session and stimulus type
+    The start and stop times of every frame of every presentation of a movie in a session.
 
-    Parameters
-    --------------------------------------
-    :param session: EcephysSession
-    :param stim_type: str
-    :param n_frames: int
-    :param df: int
+    Args:
+        session (EcephysSession): The session.
+        stim_type (str): The movie's stimulus name, e.g. 'natural_movie_one'.
+        n_frames (int, optional): Only keep the movie's first `n_frames` frames. Default is None
+            (every frame).
+        df (int): Only keep every `df`-th of those frames. Only used with `n_frames`. Default is 1.
 
-    Returns start_stop_times: np.ndarray
+    Returns:
+        np.ndarray: [n_presentations, n_frames, 2] start and stop times, in seconds, or None if the
+            presentations do not all show the same frames.
     """
 
     all_stimulus_presentations = session.stimulus_presentations

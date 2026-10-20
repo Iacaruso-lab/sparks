@@ -46,6 +46,14 @@ def test_param_groups_include_sequential_kl_transition(make_model):
     assert all(id(p) in grouped for p in transition.parameters())
 
 
+def test_sequential_kl_transition_matches_the_model_dtype(make_model):
+    model = make_model().double()
+
+    _, transition = build_param_groups(model, kl_type='sequential')
+
+    assert all(p.dtype == torch.float64 for p in transition.parameters())
+
+
 def test_param_groups_reject_unknown_kl_type(make_model):
     with pytest.raises(ValueError):
         build_param_groups(make_model(), kl_type='unknown')

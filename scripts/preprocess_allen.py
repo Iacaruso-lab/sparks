@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 """
 Preprocesses the Allen Brain Observatory Visual Coding Neuropixels data into the files that
 sparks.data.allen's loaders read (see sparks.data.allen for the layout of the data directory).

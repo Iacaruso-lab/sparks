@@ -25,32 +25,23 @@ def make_pseudomouse_gratings_data(data_path: PathLike,
     """
     Responses to the gratings and flashes of a pseudo-mouse: units pooled over every session.
 
-    Parameters
-    ----------
-    data_path : PathLike
-        The directory of the preprocessed Allen data (see sparks.data.allen).
-    areas : Sequence[str], optional
-        Visual areas to take units from. Default is ('VISp',).
-    n_neurons : int, optional
-        Number of units to draw at random from each area. None keeps them all. Default is 50.
-    target_type : str, optional
-        'class', 'freq' or 'unsupervised', see
-        sparks.data.allen.utils.make_gratings_spikes_and_targets_split. Default is 'class'.
-    p_train : float, optional
-        Fraction of each condition's trials used for training; 1 puts every trial in both
-        sets. Default is 0.8.
-    dt : float, optional
-        Time step, in seconds. Default is 0.01.
-    units_ids : np.ndarray, optional
-        Use these units rather than drawing `n_neurons` at random. Default is None.
-    seed : int, optional
-        Seed of the random draw of units. Default is None.
-    batch_size, num_workers : int, optional
-        For the dataloaders. Defaults are 1 and 0.
+    Args:
+        data_path (PathLike): The directory of the preprocessed Allen data (see sparks.data.allen).
+        areas (Sequence[str], optional): Visual areas to take units from. Default is ('VISp',).
+        n_neurons (int, optional): Number of units to draw at random from each area. None keeps them
+            all. Default is 50.
+        target_type (str, optional): 'class', 'freq' or 'unsupervised', see
+            sparks.data.allen.utils.make_gratings_spikes_and_targets_split. Default is 'class'.
+        p_train (float, optional): Fraction of each condition's trials used for training; 1 puts
+            every trial in both sets. Default is 0.8.
+        dt (float, optional): Time step, in seconds. Default is 0.01.
+        units_ids (np.ndarray, optional): Use these units rather than drawing `n_neurons` at random.
+            Default is None.
+        seed (int, optional): Seed of the random draw of units. Default is None.
+        batch_size, num_workers (int, optional): For the dataloaders. Defaults are 1 and 0.
 
-    Returns
-    -------
-    DataSplit
+    Returns:
+        DataSplit: The train and test datasets and their dataloaders.
     """
     raw_spikes, units_ids, _ = load_spikes_gratings(data_path, areas, n_neurons, seed, units_ids)
     spikes_train, spikes_test, targets_train, targets_test, units_ids = \
@@ -66,18 +57,16 @@ def get_session_ids_with_data(data_path: PathLike, stimulus: str, areas: Sequenc
     """
     The ids of the sessions that have preprocessed data for a stimulus, in increasing order.
 
-    Parameters
-    ----------
-    data_path : PathLike
-        The directory of the preprocessed Allen data (see sparks.data.allen).
-    stimulus : str
-        'gratings_flashes' (the brain_observatory_1.1 sessions; needs the `allen` extra, to read
-        the session table), 'spontaneous' (every session), or 'natural_movie_one' (the sessions
-        with a preprocessed file for every one of `areas`).
-    areas : Sequence[str], optional
-        Only used for 'natural_movie_one'. Default is ('VISp',).
-    min_snr : float, optional
-        The SNR threshold of the preprocessed files. Default is 1.5.
+    Args:
+        data_path (PathLike): The directory of the preprocessed Allen data (see sparks.data.allen).
+        stimulus (str): 'gratings_flashes' (the brain_observatory_1.1 sessions; needs the `allen`
+            extra, to read the session table), 'spontaneous' (every session), or 'natural_movie_one'
+            (the sessions with a preprocessed file for every one of `areas`).
+        areas (Sequence[str], optional): Only used for 'natural_movie_one'. Default is ('VISp',).
+        min_snr (float, optional): The SNR threshold of the preprocessed files. Default is 1.5.
+
+    Returns:
+        np.ndarray: The session ids.
     """
     if stimulus == 'gratings_flashes':
         sessions = load_ecephys_project_cache(data_path).get_session_table()
@@ -156,27 +145,21 @@ def make_session_gratings_data(data_path: PathLike,
     Responses to the gratings and flashes, one DataSplit per recording session. Needs the
     `allen` extra, to read the project's units table.
 
-    Parameters
-    ----------
-    data_path : PathLike
-        The directory of the preprocessed Allen data (see sparks.data.allen).
-    session_ids : Sequence[int]
-        The Allen ids of the sessions, see get_session_ids_with_data(data_path, 'gratings_flashes').
-    areas : Sequence[str], optional
-        Visual areas to take units from; each dataset's neurons are ordered by area, and its
-        `units_per_area` maps each area to its units. Default is ('VISp',).
-    target_type, p_train, dt :
-        See make_pseudomouse_gratings_data.
-    units_ids : np.ndarray, optional
-        Only use these units, on top of the area and SNR selection. Default is None.
-    min_snr : float, optional
-        SNR threshold of the units. Default is 1.5.
-    batch_size, num_workers : int, optional
-        For the dataloaders. Defaults are 1 and 0.
+    Args:
+        data_path (PathLike): The directory of the preprocessed Allen data (see sparks.data.allen).
+        session_ids (Sequence[int]): The Allen ids of the sessions, see
+            get_session_ids_with_data(data_path, 'gratings_flashes').
+        areas (Sequence[str], optional): Visual areas to take units from; each dataset's neurons are
+            ordered by area, and its `units_per_area` maps each area to its units. Default is
+            ('VISp',).
+        target_type, p_train, dt: See make_pseudomouse_gratings_data.
+        units_ids (np.ndarray, optional): Only use these units, on top of the area and SNR
+            selection. Default is None.
+        min_snr (float, optional): SNR threshold of the units. Default is 1.5.
+        batch_size, num_workers (int, optional): For the dataloaders. Defaults are 1 and 0.
 
-    Returns
-    -------
-    List[DataSplit]
+    Returns:
+        List[DataSplit]: One DataSplit per session, in the order of `session_ids`.
     """
     def make_datasets(raw_spikes, session_id, session_units):
         spikes_train, spikes_test, targets_train, targets_test, kept_units = \
@@ -204,18 +187,16 @@ def make_session_spontaneous_data(data_path: PathLike,
     of the longest bout (so the two overlap; see make_spontaneous_spikes_and_targets_split).
     Targets are the trials' indices. Needs the `allen` extra, to read the project's units table.
 
-    Parameters
-    ----------
-    session_ids : Sequence[int]
-        The Allen ids of the sessions, see get_session_ids_with_data(data_path, 'spontaneous').
-    train_len, test_len : float, optional
-        Length of the train and test trials, in seconds. Defaults are 1 and 10.
-    data_path, areas, dt, units_ids, min_snr, batch_size, num_workers :
-        See make_session_gratings_data.
+    Args:
+        session_ids (Sequence[int]): The Allen ids of the sessions, see
+            get_session_ids_with_data(data_path, 'spontaneous').
+        train_len, test_len (float, optional): Length of the train and test trials, in seconds.
+            Defaults are 1 and 10.
+        data_path, areas, dt, units_ids, min_snr, batch_size, num_workers: See
+            make_session_gratings_data.
 
-    Returns
-    -------
-    List[DataSplit]
+    Returns:
+        List[DataSplit]: One DataSplit per session, in the order of `session_ids`.
     """
     start_stop_times = load_start_stop_times(data_path, min_snr)
 

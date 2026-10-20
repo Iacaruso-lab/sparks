@@ -139,16 +139,16 @@ class HebbianEncoder(CarriedState):
     def forward(self, x: torch.Tensor, session_id: Union[str, int],
                carry_state: bool = False) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Forward pass through the HebbianEncoder.
+        Encodes a session's spikes into the parameters of the latents' Gaussian posterior.
 
         Args:
-            x (torch.Tensor): Input tensor. Shape: (batch, n_neurons) or (batch, seq_len, n_neurons).
-            session_id (Union[str, int]): The identifier for the session being processed.
+            x (torch.Tensor): [B, T, N] spikes of the session's neurons.
+            session_id (Union[str, int]): The session the spikes come from.
             carry_state (bool): If True, this session's Hebbian block carries its recurrent
                 (STDP/trace/linear-attention) state forward from the previous forward() call for
                 this session instead of starting from zero -- see HebbianAttentionBlock.forward.
                 Call reset_state() before the first chunk of a new, unrelated sequence. Default
-                is False (matches the original per-call-independent behavior).
+                is False (start from zero).
 
         Returns:
             A tuple containing the mean (mu) and log-variance (logvar) of the latent distribution.
@@ -176,8 +176,8 @@ class HebbianEncoder(CarriedState):
     def reparametrize(self, mu: torch.Tensor, logvar: torch.Tensor,
                       sample: Optional[bool] = None) -> torch.Tensor:
         """
-        Reparameterizes the input tensors using the reparameterization trick from the Variational AutoEncoder
-        (VAE, Kingma et al. 2014).
+        Samples latents from the Gaussian posterior with the reparameterization trick (Kingma &
+        Welling, 2014), so that gradients flow through the sample, or returns its mean.
 
         Args:
             mu (torch.Tensor): The mean of the normally-distributed latent space.

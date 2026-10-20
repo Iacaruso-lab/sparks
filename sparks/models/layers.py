@@ -4,6 +4,15 @@ from torch import nn
 
 
 class SwiGLU(nn.Module):
+    """
+    SwiGLU feed-forward layer (Shazeer, 2020): a SiLU-gated linear unit, then a linear projection.
+
+    Args:
+        in_dim (int): The input dimension.
+        out_dim (int): The output dimension.
+        hidden_mult (float): The hidden dimension, as a multiple of out_dim. Default is 8/3, which
+            matches the parameter count of a standard 4x MLP.
+    """
     def __init__(self, in_dim, out_dim, hidden_mult=8/3):
         super().__init__()
         hidden = int(out_dim * hidden_mult)
@@ -15,6 +24,15 @@ class SwiGLU(nn.Module):
 
 
 class FeedForward(nn.Module):
+    """
+    Pre-normed SwiGLU feed-forward branch: RMSNorm, SwiGLU, then dropout. The residual
+    connection is left to the caller.
+
+    Args:
+        in_dim (int): The input dimension.
+        out_dim (int): The output dimension.
+        dropout (float): Dropout probability of the output. Default is 0.
+    """
     def __init__(self, in_dim, out_dim, dropout=0.):
         super().__init__()
         self.norm = nn.RMSNorm(in_dim)
@@ -25,9 +43,14 @@ class FeedForward(nn.Module):
 
 
 class DropPath(nn.Module):
-    """Stochastic Depth: independently drops each sample's entire residual branch at train
-    time, scaling survivors by 1/keep_prob so the expected value is unchanged. No-op when
-    drop_prob=0 or in eval mode."""
+    """
+    Stochastic depth: independently drops each sample's entire residual branch at train time,
+    scaling survivors by 1/keep_prob so the expected value is unchanged. No-op when drop_prob=0 or
+    in eval mode.
+
+    Args:
+        drop_prob (float): The probability of dropping a sample's branch. Default is 0.
+    """
     def __init__(self, drop_prob: float = 0.):
         super().__init__()
         self.drop_prob = drop_prob
@@ -42,12 +65,20 @@ class DropPath(nn.Module):
 
 
 class RotaryMultiheadAttention(nn.Module):
-    """Causal self-attention with Rotary Positional Embeddings (RoPE) applied to Q/K.
+    """
+    Causal self-attention with Rotary Positional Embeddings (RoPE) applied to Q/K.
 
     nn.MultiheadAttention has no hook for rotating Q/K before the dot product, so this does the
     QKV projection explicitly and calls F.scaled_dot_product_attention directly -- which also
     means is_causal=True works with attn_mask=None natively (no [T,T] mask to build or cache,
     unlike nn.MultiheadAttention which requires an explicit mask even with is_causal=True).
+
+    Args:
+        embed_dim (int): The embedding dimension. Must be divisible by n_heads, into heads of even
+            dimension.
+        n_heads (int): The number of attention heads.
+        dropout (float): Dropout probability of the attention weights. Default is 0.
+        rope_base (float): The base of RoPE's rotation frequencies. Default is 10000.
     """
     def __init__(self, embed_dim, n_heads, dropout=0., rope_base=10000):
         super().__init__()
@@ -81,6 +112,13 @@ class RotaryMultiheadAttention(nn.Module):
         return torch.cat([-x2, x1], dim=-1)
 
     def forward(self, x):
+        """
+        Args:
+            x (torch.Tensor): [B, T, embed_dim] inputs.
+
+        Returns:
+            torch.Tensor: [B, T, embed_dim], each timestep attending to itself and earlier ones.
+        """
         B, T, D = x.shape
         qkv = self.qkv_proj(x).reshape(B, T, 3, self.n_heads, self.head_dim).permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]                                  # each [B, H, T, head_dim]
@@ -97,6 +135,20 @@ class RotaryMultiheadAttention(nn.Module):
 
 
 class AttentionBlock(nn.Module):
+    """
+    Pre-norm causal transformer block: rotary self-attention then a SwiGLU feed-forward, each in
+    a residual branch scaled by a learnable per-channel LayerScale.
+
+    Args:
+        d_model (int): The embedding dimension.
+        n_heads (int): The number of attention heads.
+        dropout (float): Dropout probability of the attention weights and feed-forward output.
+            Default is 0.
+        drop_path (float): Stochastic-depth probability of each residual branch. Default is 0.
+        layerscale_init (float): The initial value of the LayerScale. Default is 1e-2.
+        **kwargs: Ignored, so that AttentionBlock and MambaBlock take the same arguments (see
+            SharedConfig).
+    """
     def __init__(self, d_model, n_heads, dropout=0., drop_path=0., layerscale_init=1e-2, **kwargs):
         super().__init__()
 
@@ -121,7 +173,11 @@ class AttentionBlock(nn.Module):
 
     def forward(self, x):
         """
-        x: [B, T, d_model]
+        Args:
+            x (torch.Tensor): [B, T, d_model] inputs.
+
+        Returns:
+            torch.Tensor: [B, T, d_model] outputs.
         """
         x_norm = self.norm(x)
         attn_out = self.self_attn(x_norm)
@@ -133,14 +189,21 @@ class AttentionBlock(nn.Module):
 
 
 class MambaBlock(nn.Module):
+    """
+    Pre-norm Mamba (selective state-space) block in a residual branch scaled by a learnable
+    per-channel LayerScale. Needs the mamba_ssm package (see the README).
+
+    Args:
+        d_model (int): The embedding dimension.
+        d_state (int): The size of the hidden SSM state (usually 16 or 64). Default is 16.
+        d_conv (int): Width of the local 1D convolution. Default is 4.
+        expand (int): Expansion factor of the inner linear projections. Default is 2.
+        drop_path (float): Stochastic-depth probability of the residual branch. Default is 0.
+        layerscale_init (float): The initial value of the LayerScale. Default is 1e-2.
+        **kwargs: Ignored, so that AttentionBlock and MambaBlock take the same arguments (see
+            SharedConfig).
+    """
     def __init__(self, d_model, d_state=16, d_conv=4, expand=2, drop_path=0., layerscale_init=1e-2, **kwargs):
-        """
-        Args:
-            d_model: The embedding dimension coming from the Perceiver (K * D)
-            d_state: The size of the hidden SSM state (usually 16 or 64)
-            d_conv: Width of the local 1D convolution (usually 4)
-            expand: Expansion factor for the inner linear projections (usually 2)
-        """
         super().__init__()
 
         # Imported here rather than at module level: mamba_ssm is optional, slow to import, and
@@ -167,6 +230,10 @@ class MambaBlock(nn.Module):
 
     def forward(self, x):
         """
-        x: [B, T, d_model]
+        Args:
+            x (torch.Tensor): [B, T, d_model] inputs.
+
+        Returns:
+            torch.Tensor: [B, T, d_model] outputs.
         """
         return x + self.drop_path(self.scale * self.mamba(self.norm(x)))

@@ -60,7 +60,7 @@ class HebbianAttentionBlock(PerceiverFrontEnd):
             embed_dim (int): The number of dimensions for embedded output.
             n_heads (int, optional): The number of heads in the Perceiver's cross-attention. Defaults to 1.
             tau_s (float or List[float], optional): The time constant(s) for STDP. A single float gives one
-                                                Hebbian attention head (default, unchanged behavior); a list
+                                                Hebbian attention head; a list
                                                 gives one independent head per tau_s, each with its own STDP
                                                 trace and value pathway, concatenated and projected back to
                                                 embed_dim -- lets the model capture correlations at multiple
@@ -192,9 +192,8 @@ class HebbianAttentionBlock(PerceiverFrontEnd):
                 HebbianAttentionLayer.stdp_forward. Default is False, which is both stateless
                 and side-effect free (it does not touch state stored by forward()).
         Returns:
-            torch.Tensor: The stdp coefficients tensor from the Hebbian attention layer, if there's
-                          a single head (unchanged from before). With multiple heads (tau_s given as
-                          a list), a stack of per-head coefficients instead, shape [n_heads, B, T, N, N].
+            torch.Tensor: The [B, T, N, N] coefficients of the Hebbian attention layer with a single
+                head, or [n_heads, B, T, N, N] with several (tau_s given as a list).
         """
         sid = str(session_id)
         coeffs = [layer.stdp_forward(x, carry_state=carry_state, session_id=sid) for layer in self.attention_layers[sid]]

@@ -39,3 +39,12 @@ def test_monkey_dataset_smooths_each_neuron_over_time():
     # A 200-bin moving average of each neuron's spike train, away from the edges.
     expected = raw[200:400, 0].mean()
     assert smoothed[300, 0] == pytest.approx(expected.item(), abs=1e-6)
+
+
+def test_monkey_dataset_records_each_trial_direction():
+    trials = make_trials(n_trials=2) + make_trials(n_trials=3)  # two reach directions
+
+    dataset = MonkeyReachingDataset(trials, trials, 'direction')
+
+    np.testing.assert_array_equal(dataset.directions, [0, 0, 1, 1, 1])
+    np.testing.assert_array_equal(dataset[3][1], np.ones(N_TIMESTEPS))  # the target is the direction

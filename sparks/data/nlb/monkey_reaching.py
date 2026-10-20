@@ -64,26 +64,24 @@ def make_monkey_reaching_data(data_path: Union[str, os.PathLike],
     """
     Monkey reaching from the Neural Latents Benchmark area2_bump dataset (needs the `nlb` extra).
 
-    Parameters
-    ----------
-    data_path : PathLike
-        The dataset's train NWB file (sub-Han_desc-train_behavior+ecephys.nwb).
-    y_keys : str, optional
-        The behavioural variable to predict, e.g. 'hand_pos', 'hand_vel', 'force', 'muscle_len',
-        'joint_ang', or 'direction' (the reach direction's index, at every timestep). Default is
-        'hand_pos'.
-    mode : str, optional
-        'prediction' (predict y_keys PREDICTION_LAG ms ahead), 'spikes_pred', 'co-smoothing'
-        (predict every neuron, including the held-out ones), or 'unsupervised' (targets are the
-        trials' indices). Default is 'prediction'.
-    smooth : bool, optional
-        Whether to smooth the spikes into firing rates. Default is False.
-    batch_size, num_workers : int, optional
-        For the dataloaders. Defaults are 32 and 0.
+    Args:
+        data_path (PathLike): The dataset's train NWB file
+            (sub-Han_desc-train_behavior+ecephys.nwb).
+        y_keys (str, optional): The behavioural variable to predict, e.g. 'hand_pos', 'hand_vel',
+            'force', 'muscle_len', 'joint_ang', or 'direction' (the reach direction's index, at
+            every timestep). Default is 'hand_pos'.
+        mode (str, optional): What the targets are. Default is 'prediction'.
+            'prediction': `y_keys`, PREDICTION_LAG ms after the spikes.
+            'spikes_pred': `y_keys`, at the same time as the spikes (e.g. y_keys='spikes' to
+            reconstruct the spikes).
+            'co-smoothing': every neuron, including the held-out ones.
+            'unsupervised': the trials' indices; the train and test sets are then both every
+            trial.
+        smooth (bool, optional): Whether to smooth the spikes into firing rates. Default is False.
+        batch_size, num_workers (int, optional): For the dataloaders. Defaults are 32 and 0.
 
-    Returns
-    -------
-    DataSplit
+    Returns:
+        DataSplit: The train and test datasets and their dataloaders.
     """
     inputs_train, inputs_test, targets_train, targets_test = process_dataset(data_path, mode=mode, y_keys=y_keys)
 
@@ -104,19 +102,14 @@ class MonkeyReachingDataset(BaseDataset):
         """
         Trials of the area2_bump monkey reaching task, in 1 ms bins.
 
-        Parameters
-        ----------
-        input_data : List
-            One trial DataFrame per reach direction, with a 'spikes' column group (see
-            process_dataset).
-        target_data : List
-            One trial DataFrame per reach direction, with the target columns.
-        y_keys : str
-            The behavioural variable to predict, see make_monkey_reaching_data.
-        mode : str, optional
-            See make_monkey_reaching_data. Default is 'prediction'.
-        smooth : bool, optional
-            Whether to smooth the spikes into firing rates. Default is False.
+        Args:
+            input_data (List): One trial DataFrame per reach direction, with a 'spikes' column group
+                (see process_dataset).
+            target_data (List): One trial DataFrame per reach direction, with the target columns.
+            y_keys (str): The behavioural variable to predict, see make_monkey_reaching_data.
+            mode (str, optional): See make_monkey_reaching_data. Default is 'prediction'.
+            smooth (bool, optional): Whether to smooth the spikes into firing rates. Default is
+                False.
         """
 
         super().__init__()
@@ -126,6 +119,8 @@ class MonkeyReachingDataset(BaseDataset):
 
         self.spikes = torch.tensor(np.vstack([input_data[i]['spikes'].to_numpy().reshape([-1, T, x_dim])
                                               for i in range(len(input_data))])).float()
+        # Each trial's reach direction, as an index into UNIQUE_ANGLES
+        self.directions = np.concatenate([np.full(len(input_data[i]) // T, i) for i in range(len(input_data))])
 
         if y_keys == 'force':
             subkeys = ['xmo', 'ymo', 'zmo']
@@ -140,8 +135,7 @@ class MonkeyReachingDataset(BaseDataset):
                 np.concatenate([target_data[i]['spikes'].to_numpy(), target_data[i]['heldout_spikes'].to_numpy()], axis=-1).reshape([-1, T, y_dim])
                 for i in range(len(target_data))])
         elif y_keys == 'direction':
-            target_data = np.vstack([np.ones([len(target_data[i]['spikes'].to_numpy().reshape([-1, T, x_dim])), T]) * i
-                                     for i in range(len(target_data))])
+            target_data = np.repeat(self.directions[:, None], T, axis=1).astype(float)
         else:
             if subkeys is not None:
                 y_dim = target_data[0][y_keys][subkeys].to_numpy().shape[-1]

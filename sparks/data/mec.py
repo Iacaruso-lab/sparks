@@ -42,26 +42,20 @@ def make_mec_data(data_path: Union[str, os.PathLike],
     """
     Deconvolved calcium-imaging spikes recorded in the medial entorhinal cortex (MEC).
 
-    Parameters
-    ----------
-    data_path : PathLike
-        The .mat file of the session, with its binarised spikes as 'spikes_d_s', [neurons, time].
-    train_times, test_times : np.ndarray
-        [n_trials, 2] start and stop times of the train and test trials, in seconds. Every trial
-        of a set is cut to the length of its shortest one.
-    downsampling_factor : int, optional
-        Bins this many samples into one (keeping 1 if any of them spikes). Default is 1.
-    p_left_out : float, optional
-        Fraction of the neurons to draw at random and hold out, e.g. for co-smoothing; the drawn
-        indices are the datasets' `left_out_neurons`. Default is 0.
-    seed : int, optional
-        Seed of the random draw of held-out neurons. Default is None.
-    batch_size, num_workers : int, optional
-        For the dataloaders. Defaults are 1 and 0.
+    Args:
+        data_path (PathLike): The .mat file of the session, with its binarised spikes as
+            'spikes_d_s', [neurons, time].
+        train_times, test_times (np.ndarray): [n_trials, 2] start and stop times of the train and
+            test trials, in seconds. Every trial of a set is cut to the length of its shortest one.
+        downsampling_factor (int, optional): Bins this many samples into one (keeping 1 if any of
+            them spikes). Default is 1.
+        p_left_out (float, optional): Fraction of the neurons to draw at random and hold out, e.g.
+            for co-smoothing; the drawn indices are the datasets' `left_out_neurons`. Default is 0.
+        seed (int, optional): Seed of the random draw of held-out neurons. Default is None.
+        batch_size, num_workers (int, optional): For the dataloaders. Defaults are 1 and 0.
 
-    Returns
-    -------
-    DataSplit
+    Returns:
+        DataSplit: The train and test datasets and their dataloaders.
     """
     sess_data = loadmat(data_path)
     spikes_idxs = sess_data['spikes_d_s'].nonzero()
@@ -93,17 +87,13 @@ class MECDataset(BaseDataset):
         """
         Trials cut out of an MEC recording. Targets are the trials' indices.
 
-        Parameters
-        ----------
-        spikes : np.ndarray
-            The whole recording, [neurons, time].
-        start_stop_times : np.ndarray
-            [n_trials, 2] start and stop times of the trials, in seconds. Every trial is cut to
-            the length of the shortest one.
-        fs : float
-            The recording's sampling rate, in Hz.
-        left_out_neurons : np.ndarray, optional
-            Indices of neurons held out, e.g. for co-smoothing; for reference. Default is None.
+        Args:
+            spikes (np.ndarray): The whole recording, [neurons, time].
+            start_stop_times (np.ndarray): [n_trials, 2] start and stop times of the trials, in
+                seconds. Every trial is cut to the length of the shortest one.
+            fs (float): The recording's sampling rate, in Hz.
+            left_out_neurons (np.ndarray, optional): Indices of neurons held out, e.g. for
+                co-smoothing; for reference. Default is None.
         """
 
         super().__init__()
