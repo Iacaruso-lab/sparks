@@ -16,7 +16,6 @@ from pathlib import Path
 
 import torch
 
-from sparks.models import controls
 from sparks.models.configs import HebbianAttentionConfig, SharedConfig
 from sparks.models.sparks import SPARKS
 
@@ -31,8 +30,6 @@ CASES = {
     'calcium_full_multi_head': dict(hebbian_config=HebbianAttentionConfig(data_type='calcium', config='full',
                                                                           tau_s=[0.5, 2.0])),
     'two_sessions': dict(n_neurons_per_session=[10, 7], id_per_session=['a', 'b'], output_dim_per_session=[5, 6]),
-    **{f'control_{name}': dict(hebbian_config=HebbianAttentionConfig(block_class=getattr(controls, name)))
-       for name in controls.__all__},
 }
 
 
@@ -55,9 +52,8 @@ def compute_outputs(case: str, model: SPARKS, inputs: dict) -> dict:
     outputs = {}
     for session_id, x in inputs.items():
         z, decoder_outputs, mu, logvar = model(x, session_id=session_id)
-        outputs[session_id] = {'z': z, 'decoder_outputs': decoder_outputs, 'mu': mu, 'logvar': logvar}
-        if not case.startswith('control_'):  # the control blocks have no Hebbian coefficients
-            outputs[session_id]['hebbian'] = model.hebbian_forward(x, session_id=session_id)
+        outputs[session_id] = {'z': z, 'decoder_outputs': decoder_outputs, 'mu': mu, 'logvar': logvar,
+                               'hebbian': model.hebbian_forward(x, session_id=session_id)}
     return outputs
 
 

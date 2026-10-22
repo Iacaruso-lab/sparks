@@ -55,14 +55,15 @@ def process_dataset(data_path: Union[str, os.PathLike], mode: str = 'prediction'
     return inputs_train, inputs_test, targets_train, targets_test
 
 
-def make_monkey_reaching_data(data_path: Union[str, os.PathLike],
-                              y_keys: str = 'hand_pos',
-                              mode: str = 'prediction',
-                              smooth: bool = False,
-                              batch_size: int = 32,
-                              num_workers: int = 0) -> DataSplit:
+def make_area2_bump_data(data_path: Union[str, os.PathLike],
+                         y_keys: str = 'hand_pos',
+                         mode: str = 'prediction',
+                         smooth: bool = False,
+                         batch_size: int = 32,
+                         num_workers: int = 0) -> DataSplit:
     """
-    Monkey reaching from the Neural Latents Benchmark area2_bump dataset (needs the `nlb` extra).
+    The Area2_Bump dataset of the Neural Latents Benchmark, a monkey reaching toward one of eight
+    targets (needs the `nlb` extra).
 
     Args:
         data_path (PathLike): The dataset's train NWB file
@@ -85,12 +86,12 @@ def make_monkey_reaching_data(data_path: Union[str, os.PathLike],
     """
     inputs_train, inputs_test, targets_train, targets_test = process_dataset(data_path, mode=mode, y_keys=y_keys)
 
-    return make_split(MonkeyReachingDataset(inputs_train, targets_train, y_keys, mode=mode, smooth=smooth),
-                      MonkeyReachingDataset(inputs_test, targets_test, y_keys, mode=mode, smooth=smooth),
+    return make_split(Area2BumpDataset(inputs_train, targets_train, y_keys, mode=mode, smooth=smooth),
+                      Area2BumpDataset(inputs_test, targets_test, y_keys, mode=mode, smooth=smooth),
                       batch_size=batch_size, num_workers=num_workers)
 
 
-class MonkeyReachingDataset(BaseDataset):
+class Area2BumpDataset(BaseDataset):
     dt = 0.001
 
     def __init__(self,
@@ -100,14 +101,14 @@ class MonkeyReachingDataset(BaseDataset):
                  mode: str = 'prediction',
                  smooth: bool = False) -> None:
         """
-        Trials of the area2_bump monkey reaching task, in 1 ms bins.
+        Trials of the Area2_Bump reaching task, in 1 ms bins.
 
         Args:
             input_data (List): One trial DataFrame per reach direction, with a 'spikes' column group
                 (see process_dataset).
             target_data (List): One trial DataFrame per reach direction, with the target columns.
-            y_keys (str): The behavioural variable to predict, see make_monkey_reaching_data.
-            mode (str, optional): See make_monkey_reaching_data. Default is 'prediction'.
+            y_keys (str): The behavioural variable to predict, see make_area2_bump_data.
+            mode (str, optional): See make_area2_bump_data. Default is 'prediction'.
             smooth (bool, optional): Whether to smooth the spikes into firing rates. Default is
                 False.
         """

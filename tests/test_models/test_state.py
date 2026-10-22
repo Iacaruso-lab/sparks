@@ -6,11 +6,11 @@ import pytest
 import torch
 
 import sparks.models
-from sparks.models import controls
 from sparks.models.attention.ephys import FullEphysAttentionLayer
 from sparks.models.configs import HebbianAttentionConfig
 from sparks.models.state import CarriedState, map_state
 
+from front_ends import EMAFrontEnd
 from helpers import N_NEURONS, perturb_parameters
 
 
@@ -39,7 +39,7 @@ def carried_sessions(model):
             for key in module._carried_states()}
 
 
-@pytest.mark.parametrize('block_class', [None] + [getattr(controls, name) for name in controls.__all__],
+@pytest.mark.parametrize('block_class', [None, EMAFrontEnd],
                          ids=lambda cls: getattr(cls, '__name__', 'HebbianAttentionBlock'))
 def test_reset_state_clears_one_session_everywhere(make_model, spikes, block_class):
     config = HebbianAttentionConfig() if block_class is None else HebbianAttentionConfig(block_class=block_class)

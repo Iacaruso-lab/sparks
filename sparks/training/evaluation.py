@@ -38,8 +38,8 @@ def evaluate_on_batch(model: SPARKS,
             non-overlapping chunks of this many timesteps instead of one forward pass over the
             whole sequence, carrying the model's recurrent state across chunk boundaries via
             `carry_state=True` (see `SPARKS.forward`) -- use this when a recording is too long to
-            process in one pass, e.g. when a control block's per-timestep [B, T, N, N]
-            coefficient history (see `sparks.models.controls`) doesn't fit in memory. Each
+            process in one pass, e.g. when a front end's per-timestep [B, T, N, N]
+            coefficient history doesn't fit in memory. Each
             chunk's outputs are moved to CPU before being concatenated, so the accelerator only
             ever holds one chunk. Calls `model.reset_state(session_id)` once before the first
             chunk, so call this function once per trial/recording, not once per chunk. The

@@ -50,7 +50,6 @@ sparks/
 │   ├── front_end.py     # FrontEndBlock interface and the shared Perceiver readout
 │   ├── perceiver.py     # PerceiverBlock: neurons -> bottleneck_dim latent slots
 │   ├── attention/       # Hebbian attention layers: ephys (STDP) and calcium
-│   ├── controls/        # non-Hebbian front ends, for ablations
 │   ├── layers.py        # generic blocks: attention, Mamba, feed-forward
 │   ├── decoders.py      # MLP, linear and transformer decoders
 │   ├── configs.py       # HebbianAttentionConfig, SharedConfig
@@ -87,8 +86,9 @@ loader returns the same `DataSplit`.
 ### Adding a front end
 
 A front end replaces the Hebbian attention block in the encoder. Subclass
-`sparks.models.FrontEndBlock` (see `sparks.models.controls` for examples) and select it with
-`HebbianAttentionConfig(block_class=...)`.
+`sparks.models.FrontEndBlock` and select it with `HebbianAttentionConfig(block_class=...)`.
+`tests/front_ends.py` has a minimal example, and the `controls` package of the `sparks-controls`
+repository (the ablations of the paper) has complete ones.
 
 ## Making a release
 

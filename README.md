@@ -99,7 +99,7 @@ and test datasets and their dataloaders.
 | Data | Loader | Extra |
 | --- | --- | --- |
 | Medial entorhinal cortex calcium imaging ([Gonzalo Cogno et al., 2024](https://doi.org/10.1038/s41586-023-06864-1)) | `sparks.data.mec.make_mec_data` | |
-| Monkey reaching, NLB Area2_Bump ([Neural Latents Benchmark](https://neurallatents.github.io/)) | `sparks.data.nlb.monkey_reaching.make_monkey_reaching_data` | `nlb` |
+| Area2_Bump: monkey reaching ([Neural Latents Benchmark](https://neurallatents.github.io/)) | `sparks.data.nlb.area2_bump.make_area2_bump_data` | `nlb` |
 | Allen Visual Coding Neuropixels: gratings and flashes, spontaneous activity, natural movie | `sparks.data.allen` (`make_pseudomouse_*_data`, `make_session_*_data`) | `allen` |
 | Allen calcium imaging, natural movie | `sparks.data.allen.make_calcium_movies_data` | `cebra` |
 
@@ -118,7 +118,7 @@ train SPARKS on real data:
 - [`mec.ipynb`](https://github.com/FrancisCrickInstitute/sparks/blob/main/examples/mec.ipynb):
   unsupervised learning on medial entorhinal cortex recordings, recovering their slow oscillatory
   sequences.
-- [`monkey_reaching.ipynb`](https://github.com/FrancisCrickInstitute/sparks/blob/main/examples/monkey_reaching.ipynb):
+- [`area2_bump.ipynb`](https://github.com/FrancisCrickInstitute/sparks/blob/main/examples/area2_bump.ipynb):
   decoding a monkey's hand position from somatosensory cortex.
 - [`allen_multisession.ipynb`](https://github.com/FrancisCrickInstitute/sparks/blob/main/examples/allen_multisession.ipynb):
   one model for several mice, decoding which movie frame they see, then adding a new mouse.
@@ -126,8 +126,7 @@ train SPARKS on real data:
 ## Reproducing the paper
 
 The scripts that reproduce the results of the paper are in
-[sparks-examples](https://github.com/Iacaruso-lab/sparks-examples). They were written for
-`sparks-ai` 0.2, so install `pip install sparks-ai==0.2.1` to run them.
+[sparks-examples](https://github.com/Iacaruso-lab/sparks-examples).
 
 ## Citation
 

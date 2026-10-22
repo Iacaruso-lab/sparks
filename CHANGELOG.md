@@ -9,8 +9,7 @@ version (0.x.0) can break the API.
 0.3.0 is a breaking release. The model now processes whole sequences instead of one timestep at a
 time, and the package has been reorganised. Models trained with 0.2.x cannot be loaded, and code
 written for 0.2.x has to be updated as described in [Migrating from 0.2.x](#migrating-from-02x).
-To keep running 0.2.x code, such as the paper's scripts in
-[sparks-examples](https://github.com/Iacaruso-lab/sparks-examples), pin `sparks-ai==0.2.1`.
+To keep running 0.2.x code, pin `sparks-ai==0.2.1`.
 
 ### Added
 
@@ -43,10 +42,8 @@ To keep running 0.2.x code, such as the paper's scripts in
 - **Shared sequence blocks:** `SharedConfig` stacks causal rotary attention blocks
   (`AttentionBlock`) or Mamba blocks (`MambaBlock`) between the Hebbian attention block and the
   latents.
-- **Control blocks** (`sparks.models.controls`): non-Hebbian front ends (MLP, GRU, transformer,
-  symmetric and correlation coefficient blocks) for ablations. They plug in through
-  `HebbianAttentionConfig(block_class=...)`.
-- **`FrontEndBlock`:** the interface a custom front end implements.
+- **`FrontEndBlock`:** the interface a custom front end implements, to replace the Hebbian
+  attention block through `HebbianAttentionConfig(block_class=...)`.
 - **Data:**
   - Every loader returns a `DataSplit(train_dataset, test_dataset, train_loader, test_loader)`.
   - Every dataset subclasses `BaseDataset`, which has `n_neurons` and `dt` (in seconds).
@@ -57,7 +54,7 @@ To keep running 0.2.x code, such as the paper's scripts in
   - `import sparks` gives `SPARKS`, `HebbianAttentionConfig`, `SharedConfig`, `train`,
     `evaluate` and `__version__`.
   - A test suite and continuous integration (Python 3.9 to 3.13).
-- **Example notebooks** in `examples/`: MEC (unsupervised), monkey reaching (behaviour
+- **Example notebooks** in `examples/`: MEC (unsupervised), Area2_Bump (behaviour
   decoding) and Allen multi-session (movie frame decoding, adding a session).
 
 ### Changed
@@ -141,7 +138,8 @@ To keep running 0.2.x code, such as the paper's scripts in
 | 0.2.x | 0.3.0 |
 | --- | --- |
 | `make_mec_ca_dataset` | `sparks.data.mec.make_mec_data` (held-out neurons: `dataset.left_out_neurons`) |
-| `make_monkey_reaching_dataset` | `sparks.data.nlb.monkey_reaching.make_monkey_reaching_data` |
+| `sparks.data.nlb.monkey_reaching.make_monkey_reaching_dataset` | `sparks.data.nlb.area2_bump.make_area2_bump_data` |
+| `MonkeyReachingDataset` | `sparks.data.nlb.area2_bump.Area2BumpDataset` |
 | `gratings_pseudomouse.make_gratings_dataset` | `sparks.data.allen.make_pseudomouse_gratings_data` |
 | `gratings_multisess.make_gratings_dataset` | `make_session_gratings_data`, `make_session_spontaneous_data` (one `DataSplit` per session) |
 | `make_pseudomouse_allen_movies_dataset_and_dls` | `make_pseudomouse_movies_data`, `make_calcium_movies_data` |
@@ -164,7 +162,7 @@ renames:
 | Development code | 0.3.0 |
 | --- | --- |
 | `ConvConfig`, `conv_config` | `SharedConfig`, `shared_config` |
-| `sparks.models.controls.utils` | `sparks.models.controls.base`, `sparks.models.controls.functional` |
+| `sparks.models.controls` | Moved out of the package: the `controls` package of the `sparks-controls` repository |
 | `ControlBlockBase` | `FrontEndBlock` |
 | `sparks.models.attention.scan` | `sparks.models.scan` |
 | `FullCalciumAttentionLayer`, `LightCalciumAttentionLayer` | `CalciumAttentionLayer` (`tau_s` must be positive) |

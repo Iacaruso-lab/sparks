@@ -44,7 +44,7 @@ class DataSplit(NamedTuple):
     The train and test sets of one recording (or pseudo-population), with their dataloaders --
     what every `make_*_data` function returns. Unpacks like a tuple:
 
-        train_dataset, test_dataset, train_loader, test_loader = make_monkey_reaching_data(...)
+        train_dataset, test_dataset, train_loader, test_loader = make_area2_bump_data(...)
     """
     train_dataset: BaseDataset
     test_dataset: BaseDataset

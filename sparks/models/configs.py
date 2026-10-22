@@ -9,8 +9,8 @@ from sparks.models.layers import AttentionBlock
 @dataclass
 class HebbianAttentionConfig:
     """
-    Configuration of the encoder's front end: the Hebbian attention block, or a control block
-    replacing it (see `sparks.models.controls`).
+    Configuration of the encoder's front end: the Hebbian attention block, or another front end
+    replacing it (a `sparks.models.FrontEndBlock` subclass).
 
     Some fields only apply to one data_type and are ignored for the other: w_plus and alpha are
     ephys-only; min_attn_value, max_attn_value and n_timescales are calcium-only.

@@ -18,8 +18,8 @@ class FrontEndBlock(CarriedState, metaclass=ABCMeta):
     """
     The interface of the block at the front of the SPARKS encoder (`HebbianAttentionConfig.block_class`),
     which turns each session's spikes into the latent stream shared by every session.
-    `HebbianAttentionBlock` is the model's own; `sparks.models.controls` holds alternatives for
-    ablations.
+    `HebbianAttentionBlock` is the model's own; other front ends subclass this one to replace it
+    (the ablation controls of the sparks-controls repository, for example).
 
     One instance serves every session: its constructor takes `n_neurons_per_session`, `embed_dim`
     and `bottleneck_dim` (plus the HebbianAttentionConfig fields, ignoring those it doesn't use),
@@ -43,8 +43,8 @@ class PerceiverFrontEnd(FrontEndBlock):
     """
     Base for front ends that embed each neuron once per head, mix the heads, and compress the
     neurons into `bottleneck_dim` latent slots with a Perceiver. Only the per-head embeddings
-    differ between subclasses (HebbianAttentionBlock and the coefficient controls), so that a
-    control changes nothing else.
+    differ between subclasses (HebbianAttentionBlock's come from the STDP coefficients of each
+    pair of neurons), so that swapping one for another changes nothing else.
 
     Subclasses build their per-session modules, then call `_init_readout`, and pass their per-head
     embeddings to `_readout` in forward.
