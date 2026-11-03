@@ -53,7 +53,7 @@ Optional extras add the dependencies of the data loaders and the examples:
 
 For example, `pip install "sparks-ai[nlb,demos]"`.
 
-NEW: Conventional attention can be replace with [Mamba](https://github.com/state-spaces/mamba) blocks (unpublished) - (`sparks.models.MambaBlock`) need the
+NEW: Conventional attention can be replaced with [Mamba](https://github.com/state-spaces/mamba) blocks (unpublished) - (`sparks.models.MambaBlock`) need the
 `mamba-ssm` package, which is compiled against your PyTorch and CUDA. Install `ninja`, then run
 `pip install causal-conv1d mamba-ssm --no-build-isolation`.
 
