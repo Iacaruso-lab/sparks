@@ -19,7 +19,7 @@ class FrontEndBlock(CarriedState, metaclass=ABCMeta):
     The interface of the block at the front of the SPARKS encoder (`HebbianAttentionConfig.block_class`),
     which turns each session's spikes into the latent stream shared by every session.
     `HebbianAttentionBlock` is the model's own; other front ends subclass this one to replace it
-    (the ablation controls of the sparks-controls repository, for example).
+    (the ablation controls of https://github.com/Iacaruso-lab/sparks-controls, for example).
 
     One instance serves every session: its constructor takes `n_neurons_per_session`, `embed_dim`
     and `bottleneck_dim` (plus the HebbianAttentionConfig fields, ignoring those it doesn't use),

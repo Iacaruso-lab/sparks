@@ -11,7 +11,8 @@ def parallel_affine_scan(a: torch.Tensor, b: torch.Tensor,
     (time).
 
     Args:
-        a, b: Tensors of identical shape [B, T, ...]. `T` is scanned along dim=1.
+        a, b: [B, T, ...] tensors, `a` possibly broadcastable to `b`'s shape (e.g. a constant
+            decay). `T` is scanned along dim=1.
         x_init: Optional tensor of shape [B, ...] (a/b without the T dim) -- the value of
             x_{-1}, e.g. to carry a recurrent state across a chunk boundary. Folded into b's
             first timestep (x_0 = a_0*x_init + b_0 is exactly what the recurrence would give
@@ -23,12 +24,14 @@ def parallel_affine_scan(a: torch.Tensor, b: torch.Tensor,
     Cost: O(log2(T)) sequential steps, each a handful of elementwise ops over the full
     [B, T, ...] tensor, instead of T sequential steps over [B, ...] tensors.
     """
+    # a may broadcast to b (e.g. a [1, 1, 1] constant decay): B and T must come from b
+    a = a.expand_as(b)
     if x_init is not None:
         b = torch.cat([b[:, :1] + a[:, :1] * x_init.unsqueeze(1), b[:, 1:]], dim=1)
 
     a = a.clone()
     b = b.clone()
-    T = a.shape[1]
+    T = b.shape[1]
 
     offset = 1
     while offset < T:
@@ -67,10 +70,8 @@ def clamped_affine_scan(a: torch.Tensor, b: torch.Tensor,
     if min_val == -float('inf') and max_val == float('inf'):
         return parallel_affine_scan(a, b, x_init=x_init)
 
-    B, T = a.shape[0], a.shape[1]
-    # a/b are frequently broadcast views (e.g. a constant decay expanded over T); materializing
-    # them contiguously once avoids re-striding through a 0-stride dim on every one of the T slices below.
-    a = a.expand(B, T, *b.shape[2:]).contiguous()
+    T = b.shape[1]  # not a's: a may broadcast to b, e.g. a [1, 1, 1] constant decay
+    a = a.expand_as(b)
     b = b.contiguous()
 
     x = x_init if x_init is not None else torch.zeros_like(b[:, 0])

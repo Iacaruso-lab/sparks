@@ -17,7 +17,7 @@ _ATTENTION_LAYERS = {'ephys': {'full': FullEphysAttentionLayer,
 # Settings each family of attention layers takes, besides n_neurons, embed_dim and tau_s. A block
 # holds the union of both, so each layer is only given its own.
 _LAYER_ARGS = {'ephys': ('dt', 'w_plus', 'alpha'),
-               'calcium': ('dt', 'min_attn_value', 'max_attn_value', 'n_timescales')}
+               'calcium': ('dt', 'min_attn_value', 'max_attn_value')}
 
 
 def _attention_layer_class(data_type: str, config: str):
@@ -42,9 +42,8 @@ class HebbianAttentionBlock(PerceiverFrontEnd):
                  data_type: str = 'ephys',
                  config: str = 'full',
                  n_heads: int = 1,
-                 min_attn_value: float = -10.,
-                 max_attn_value: float = 10.,
-                 n_timescales: int = 5) -> None:
+                 min_attn_value: float = -0.5,
+                 max_attn_value: float = 1.5) -> None:
         """
         Initialize a Hebbian Transformer Block.
 
@@ -69,9 +68,11 @@ class HebbianAttentionBlock(PerceiverFrontEnd):
             w_plus (float, optional): The positive weight for the attention mechanism. Defaults to 0.001.
             alpha (float, optional): The scaling factor for the post-synaptic weight. Defaults to 1.1.
             data_type (str, optional): The type of data, can be 'ephys' or 'calcium'. Defaults to 'ephys'.
-            min_attn_value (float, optional): The minimum value for attention coefficients. Defaults to -10. (only
-                                                consumed by calcium; ephys's clamp is hardcoded regardless).
-            max_attn_value (float, optional): The maximum value for attention coefficients. Defaults to 10.
+            min_attn_value (float, optional): The minimum value of the calcium attention coefficients. Defaults
+                                                to -0.5 (the ephys STDP coefficients are always clipped to
+                                                [-0.5, 1.5]).
+            max_attn_value (float, optional): The maximum value of the calcium attention coefficients. Defaults
+                                                to 1.5.
             config (HebbianAttentionConfig): Configuration for the Hebbian attention block (full weights or light).
 
         Returns:
@@ -87,8 +88,7 @@ class HebbianAttentionBlock(PerceiverFrontEnd):
         # Per-session layer settings, reused by add_session for any a new session doesn't override.
         self._default_layer_config = dict(tau_s=tau_s, dt=dt, w_plus=w_plus, alpha=alpha,
                                           data_type=data_type, config=config,
-                                          min_attn_value=min_attn_value, max_attn_value=max_attn_value,
-                                          n_timescales=n_timescales)
+                                          min_attn_value=min_attn_value, max_attn_value=max_attn_value)
 
         # Session-specific Hebbian attention layer(s): one ModuleList of heads per session,
         # each sized to that session's own n_neurons (multiple heads, each with its own tau_s,
@@ -111,8 +111,7 @@ class HebbianAttentionBlock(PerceiverFrontEnd):
                           data_type: Optional[str] = None,
                           config: Optional[str] = None,
                           min_attn_value: Optional[float] = None,
-                          max_attn_value: Optional[float] = None,
-                          n_timescales: Optional[int] = None) -> None:
+                          max_attn_value: Optional[float] = None) -> None:
         """
         Adds a new session-specific Hebbian attention layer (and a matching per-session
         Perceiver neuron identity) to this shared block, rather than building a whole new
@@ -136,7 +135,7 @@ class HebbianAttentionBlock(PerceiverFrontEnd):
         cfg = dict(self._default_layer_config)
         overrides = dict(tau_s=tau_s, dt=dt, w_plus=w_plus, alpha=alpha, data_type=data_type,
                          config=config, min_attn_value=min_attn_value,
-                         max_attn_value=max_attn_value, n_timescales=n_timescales)
+                         max_attn_value=max_attn_value)
         cfg.update({k: v for k, v in overrides.items() if v is not None})
 
         n_heads = len(tau_s_per_head(cfg['tau_s']))

@@ -87,15 +87,18 @@ loader returns the same `DataSplit`.
 
 A front end replaces the Hebbian attention block in the encoder. Subclass
 `sparks.models.FrontEndBlock` and select it with `HebbianAttentionConfig(block_class=...)`.
-`tests/front_ends.py` has a minimal example, and the `controls` package of the `sparks-controls`
-repository (the ablations of the paper) has complete ones.
+`tests/front_ends.py` has a minimal example, and the `controls` package of the
+[sparks-controls](https://github.com/Iacaruso-lab/sparks-controls) repository (the ablations of the paper)
+has complete ones.
 
 ## Making a release
 
 1. Update the version in `sparks/__init__.py` (`__version__`), which `pyproject.toml` reads.
 2. Move the CHANGELOG's *Unreleased* entries under the new version and date.
-3. Check that CI passes, then build and check the package:
+3. Check that CI passes, then build and check the package from a fresh clone (in a working copy,
+   a `sparks_ai.egg-info` left by an editable install makes setuptools reuse its stale file list):
    ```bash
+   git clone https://github.com/FrancisCrickInstitute/SPARKS.git sparks-release && cd sparks-release
    python -m build
    twine check --strict dist/*
    ```

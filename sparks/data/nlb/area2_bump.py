@@ -5,7 +5,6 @@ import numpy as np
 import torch
 
 from sparks.data.base import BaseDataset, DataSplit, make_split
-from sparks.data.misc import smooth as smooth_signal
 from sparks.data.nlb.nwb_interface import NWBDataset
 
 # The eight reach directions of the area2_bump task, in degrees.
@@ -16,6 +15,7 @@ ALIGN_RANGE = (-100, 500)
 N_TIMESTEPS = ALIGN_RANGE[1] - ALIGN_RANGE[0]
 # In 'prediction' mode, behaviour is predicted this many ms after the spikes.
 PREDICTION_LAG = 40
+AREA2_BUMP_MODES = ('prediction', 'co-smoothing', 'unsupervised')
 
 
 def process_dataset(data_path: Union[str, os.PathLike], mode: str = 'prediction',
@@ -24,10 +24,12 @@ def process_dataset(data_path: Union[str, os.PathLike], mode: str = 'prediction'
     Loads the area2_bump NWB file and cuts it into trials aligned on movement onset, grouped by
     reach direction: (inputs_train, inputs_test, targets_train, targets_test), each a list with
     one trial DataFrame per direction (see NWBDataset.make_trial_data). Only active trials are
-    kept. In 'prediction', 'spikes_pred' and 'co-smoothing' modes the NLB train and val splits
-    give the train and test sets; otherwise both sets are every trial. Targets are offset by
+    kept. In 'prediction' and 'co-smoothing' modes the NLB train and val splits give the train and
+    test sets; otherwise both sets are every trial. Targets are offset by
     PREDICTION_LAG in 'prediction' mode, and `y_keys` (unless 'direction') is min-max normalised.
     """
+    if mode not in AREA2_BUMP_MODES:
+        raise ValueError(f"Unknown mode: {mode!r}. Valid modes: {AREA2_BUMP_MODES}.")
     split_heldout = (mode == 'co-smoothing')
     dataset = NWBDataset(data_path, "*train", split_heldout=split_heldout)
 
@@ -45,7 +47,7 @@ def process_dataset(data_path: Union[str, os.PathLike], mode: str = 'prediction'
                                         ignored_trials=~(mask & (dataset.trial_info['cond_dir'] == angle)))
                 for angle in UNIQUE_ANGLES]
 
-    if mode in ['prediction', 'spikes_pred', 'co-smoothing']:
+    if mode in ['prediction', 'co-smoothing']:
         inputs_train, inputs_test = trials_per_angle(ALIGN_RANGE, 'train'), trials_per_angle(ALIGN_RANGE, 'val')
         targets_train, targets_test = trials_per_angle(lag_align_range, 'train'), trials_per_angle(lag_align_range, 'val')
     else:
@@ -58,7 +60,6 @@ def process_dataset(data_path: Union[str, os.PathLike], mode: str = 'prediction'
 def make_area2_bump_data(data_path: Union[str, os.PathLike],
                          y_keys: str = 'hand_pos',
                          mode: str = 'prediction',
-                         smooth: bool = False,
                          batch_size: int = 32,
                          num_workers: int = 0) -> DataSplit:
     """
@@ -73,12 +74,9 @@ def make_area2_bump_data(data_path: Union[str, os.PathLike],
             every timestep). Default is 'hand_pos'.
         mode (str, optional): What the targets are. Default is 'prediction'.
             'prediction': `y_keys`, PREDICTION_LAG ms after the spikes.
-            'spikes_pred': `y_keys`, at the same time as the spikes (e.g. y_keys='spikes' to
-            reconstruct the spikes).
             'co-smoothing': every neuron, including the held-out ones.
             'unsupervised': the trials' indices; the train and test sets are then both every
             trial.
-        smooth (bool, optional): Whether to smooth the spikes into firing rates. Default is False.
         batch_size, num_workers (int, optional): For the dataloaders. Defaults are 32 and 0.
 
     Returns:
@@ -86,8 +84,8 @@ def make_area2_bump_data(data_path: Union[str, os.PathLike],
     """
     inputs_train, inputs_test, targets_train, targets_test = process_dataset(data_path, mode=mode, y_keys=y_keys)
 
-    return make_split(Area2BumpDataset(inputs_train, targets_train, y_keys, mode=mode, smooth=smooth),
-                      Area2BumpDataset(inputs_test, targets_test, y_keys, mode=mode, smooth=smooth),
+    return make_split(Area2BumpDataset(inputs_train, targets_train, y_keys, mode=mode),
+                      Area2BumpDataset(inputs_test, targets_test, y_keys, mode=mode),
                       batch_size=batch_size, num_workers=num_workers)
 
 
@@ -98,8 +96,7 @@ class Area2BumpDataset(BaseDataset):
                  input_data: List,
                  target_data: List,
                  y_keys: str,
-                 mode: str = 'prediction',
-                 smooth: bool = False) -> None:
+                 mode: str = 'prediction') -> None:
         """
         Trials of the Area2_Bump reaching task, in 1 ms bins.
 
@@ -109,11 +106,11 @@ class Area2BumpDataset(BaseDataset):
             target_data (List): One trial DataFrame per reach direction, with the target columns.
             y_keys (str): The behavioural variable to predict, see make_area2_bump_data.
             mode (str, optional): See make_area2_bump_data. Default is 'prediction'.
-            smooth (bool, optional): Whether to smooth the spikes into firing rates. Default is
-                False.
         """
 
         super().__init__()
+        if mode not in AREA2_BUMP_MODES:
+            raise ValueError(f"Unknown mode: {mode!r}. Valid modes: {AREA2_BUMP_MODES}.")
 
         x_dim = input_data[0]['spikes'].shape[-1]
         T = N_TIMESTEPS
@@ -151,13 +148,6 @@ class Area2BumpDataset(BaseDataset):
         # The decoder's output size: the number of directions to classify, or of target features
         self.target_dim = len(UNIQUE_ANGLES) if y_keys == 'direction' else self.target_data.shape[-1]
 
-        if smooth:
-            # Firing rates: each trial's spike train smoothed over time, neuron by neuron.
-            self.spikes = torch.from_numpy(np.stack([
-                np.stack([smooth_signal(neuron, window=200) for neuron in trial.T.numpy()], axis=-1)
-                for trial in self.spikes])).float()
-
-        self.smooth = smooth
         self.mode = mode
 
     def __len__(self):

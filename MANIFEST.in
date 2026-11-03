@@ -1,0 +1,5 @@
+# Never ship PyPI settings or credentials, even if a stale *.egg-info file list still names them
+exclude .pypirc
+# The whole test suite, not only the tests/test*.py files setuptools picks by default
+graft tests
+global-exclude __pycache__ *.py[cod]

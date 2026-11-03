@@ -21,8 +21,8 @@ class SPARKS(CarriedState):
 
     One model can encode several recording sessions with different numbers of neurons into a
     single latent space: each session has its own Hebbian attention layers (and optionally its
-    own decoder output head), everything else is shared. Sessions can be added after training
-    with `add_session`.
+    own decoder output head, e.g. to reconstruct each session's neurons in unsupervised learning);
+    everything else is shared. Sessions can be added after training with `add_session`.
 
     Args:
         n_neurons_per_session (Union[int, List[int]]): The number of neurons of each session.

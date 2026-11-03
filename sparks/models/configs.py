@@ -13,13 +13,13 @@ class HebbianAttentionConfig:
     replacing it (a `sparks.models.FrontEndBlock` subclass).
 
     Some fields only apply to one data_type and are ignored for the other: w_plus and alpha are
-    ephys-only; min_attn_value, max_attn_value and n_timescales are calcium-only.
+    ephys-only; min_attn_value and max_attn_value are calcium-only.
 
     Attributes:
         block_class (Type[nn.Module]): The front-end block. Default is HebbianAttentionBlock.
         tau_s (Union[float, List[float]]): One Hebbian attention head per value. Ephys: the STDP
-            time constant, in seconds. Calcium: scales the range of the trace's decay timescales
-            (10 ms to 1 s at tau_s=1). Default is 1.
+            time constant, in seconds. Calcium: the time constant of the coefficients' leak, in
+            seconds (see CalciumAttentionLayer). Default is 1.
         n_heads (int): The number of heads of the Perceiver's attention. Default is 1.
         dropout (float): Dropout probability of the block's attention and feed-forward layers.
             Default is 0.
@@ -30,15 +30,11 @@ class HebbianAttentionConfig:
             is 0.001.
         alpha (float): Ephys only: the post-synaptic trace's weight relative to the
             pre-synaptic one; above 1, depression outweighs potentiation. Default is 1.1.
-        data_type (str): 'ephys' (spike trains, STDP) or 'calcium' (calcium imaging,
-            multi-timescale traces). Default is 'ephys'.
-        min_attn_value (float): Calcium only: lower bound of the fluorescence trace (the ephys
-            STDP coefficients are always clamped to EphysAttentionLayer.STDP_RANGE). Default is
-            -10.
-        max_attn_value (float): Calcium only: upper bound of the fluorescence trace. Default is
-            10.
-        n_timescales (int): Calcium only: the number of log-spaced decay timescales of the
-            fluorescence trace. Default is 5.
+        data_type (str): 'ephys' (spike trains, STDP) or 'calcium' (calcium imaging, see
+            CalciumAttentionLayer). Default is 'ephys'.
+        min_attn_value (float): Calcium only: lower bound of the coefficients (the ephys STDP
+            coefficients are always clipped to EphysAttentionLayer.STDP_RANGE). Default is -0.5.
+        max_attn_value (float): Calcium only: upper bound of the coefficients. Default is 1.5.
         config (str): Ephys only: 'light' (trace decays fixed by tau_s, weights shared by every
             pair of neurons) or 'full' (decays and weights learned per pair of neurons). Default
             is 'light'.
@@ -54,9 +50,8 @@ class HebbianAttentionConfig:
     w_plus: float = 0.001
     alpha: float = 1.1
     data_type: str = 'ephys'
-    min_attn_value: float = -10.
-    max_attn_value: float = 10.
-    n_timescales: int = 5
+    min_attn_value: float = -0.5
+    max_attn_value: float = 1.5
     config: str = 'light'
     params: Dict[str, Any] = field(default_factory=dict)
 
@@ -77,7 +72,6 @@ class HebbianAttentionConfig:
             'data_type': self.data_type,
             'min_attn_value': self.min_attn_value,
             'max_attn_value': self.max_attn_value,
-            'n_timescales': self.n_timescales,
             'config': self.config
         }
 

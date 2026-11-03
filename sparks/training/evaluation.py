@@ -164,8 +164,9 @@ def get_hebbian_coeffs_on_batch(model: SPARKS,
             makes a long recording tractable: each chunk's history is released as soon as the
             next chunk is computed, so the retained footprint stops scaling with T and stays at
             one chunk's worth (chunk_length * N^2) rather than T * N^2. Use it whenever only the
-            end state is wanted -- the coefficients accumulate each pair's history without leak,
-            so the last timestep is the estimate over the full recording. On its own
+            end state is wanted -- the ephys STDP coefficients accumulate each pair's history
+            without leak, so the last timestep is the estimate over the full recording (the
+            calcium coefficients leak, with time constant tau_s). On its own
             (chunk_length=None) it saves nothing during the pass, since the layer still builds
             the [B, T, N, N] history internally before it is sliced; pass both. Default is False.
 

@@ -29,11 +29,10 @@ class HebbianEncoder(CarriedState):
         None
     """
     # Without beta (KL weight) tuned carefully, logvar has no pressure keeping it in a sane
-    # range -- it's the raw, unconstrained output of a Linear layer. Left unclamped, this can (a)
-    # inject unstable, run-to-run-varying amounts of reparameterization noise during training
-    # (large logvar -> large std -> large eps*std, fresh every forward pass), and (b) genuinely
-    # overflow float32 in kl_loss's logvar.exp() term for large enough values. Clamping bounds
-    # both failure modes without needing beta to be perfectly tuned first.
+    # range. Left unclamped, this can (a) inject unstable, run-to-run-varying amounts of
+    # reparameterization noise during training (large logvar -> large std -> large eps*std,
+    # fresh every forward pass), and (b) overflow float32 in kl_loss's logvar.exp() term for
+    # large enough values.
     _LOGVAR_MIN = -4.0
     _LOGVAR_MAX = 2.0
 
@@ -232,4 +231,3 @@ class HebbianEncoder(CarriedState):
             raise ValueError(f"Session ID '{session_id}' not found.")
 
         return self.hebbian_block.hebbian_forward(x, session_id, carry_state=carry_state)
-

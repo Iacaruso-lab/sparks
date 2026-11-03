@@ -160,11 +160,7 @@ class AttentionBlock(nn.Module):
 
         # LayerScale: every layer in a pre-norm residual stack adds a full, unscaled contribution
         # regardless of depth, so the residual stream's variance grows roughly linearly with the
-        # number of stacked layers (measured: output std went 1.01 -> 1.40 from 1 to 16 layers on
-        # random input), making each new layer's fixed-magnitude update a progressively smaller,
-        # less-calibrated fraction of an ever-growing signal -- not vanishing gradients (pre-norm's
-        # identity path prevents that; input grad norm actually grew with depth in the same test),
-        # but a scale-calibration problem that gets worse, not just plateaus, as layers are added.
+        # number of stacked layers.
         # A small learnable per-channel scale on each residual branch, initialized near zero, lets
         # deep stacks start close to identity and grow each layer's contribution only as training
         # finds it useful (same idea as GPT-2's 1/sqrt(2*n_layers) init scaling, but learnable).

@@ -6,7 +6,8 @@ from sparks.models.attention.ephys import FullEphysAttentionLayer, LightEphysAtt
 
 from helpers import BATCH, EMBED_DIM, N_NEURONS, N_TIMESTEPS
 
-LAYER_CLASSES = [FullEphysAttentionLayer, LightEphysAttentionLayer, CalciumAttentionLayer]
+EPHYS_LAYER_CLASSES = [FullEphysAttentionLayer, LightEphysAttentionLayer]
+LAYER_CLASSES = EPHYS_LAYER_CLASSES + [CalciumAttentionLayer]
 
 
 def make_inputs(layer_class):
@@ -25,7 +26,7 @@ def test_output_shapes(layer_class):
     assert layer.stdp_forward(x).shape == (BATCH, N_TIMESTEPS, N_NEURONS, N_NEURONS)
 
 
-@pytest.mark.parametrize('layer_class', LAYER_CLASSES)
+@pytest.mark.parametrize('layer_class', EPHYS_LAYER_CLASSES)
 def test_parallel_and_sequential_coefficients_match(layer_class):
     """stdp_coefficients dispatches between the two implementations on N; both must agree."""
     layer = layer_class(n_neurons=N_NEURONS, embed_dim=EMBED_DIM)
@@ -79,24 +80,48 @@ def test_reset_state_restarts_from_zero(layer_class):
 
 @pytest.mark.parametrize('layer_class', LAYER_CLASSES)
 def test_layers_reject_settings_they_do_not_use(layer_class):
-    unused = 'n_timescales' if layer_class in (FullEphysAttentionLayer, LightEphysAttentionLayer) else 'w_plus'
+    unused = 'min_attn_value' if layer_class in EPHYS_LAYER_CLASSES else 'w_plus'
 
     with pytest.raises(TypeError):
         layer_class(n_neurons=N_NEURONS, embed_dim=EMBED_DIM, **{unused: 1})
 
 
-def test_calcium_tau_s_scales_the_timescales():
-    layer_class = CalciumAttentionLayer
-    default = layer_class(n_neurons=N_NEURONS, embed_dim=EMBED_DIM)
-    slower = layer_class(n_neurons=N_NEURONS, embed_dim=EMBED_DIM, tau_s=2.)
+@pytest.mark.parametrize('bounds', [(-0.5, 1.5), (-float('inf'), float('inf'))])
+def test_calcium_coefficients_follow_the_leaky_difference_rule(bounds):
+    """a_ij integrates the difference of the traces, x_i - x_j, decaying by exp(-dt / tau_s) per step, and is
+    clipped. Both bounds cases, since they run different scans (sequential when clipped, parallel otherwise)."""
+    min_attn_value, max_attn_value = bounds
+    layer = CalciumAttentionLayer(n_neurons=N_NEURONS, embed_dim=EMBED_DIM, tau_s=0.5, dt=0.1,
+                                  min_attn_value=min_attn_value, max_attn_value=max_attn_value)
+    x = 1.5 * make_inputs(CalciumAttentionLayer)
 
-    torch.testing.assert_close(default.decay_rates, torch.logspace(-2, 0, 5))  # 10ms-1s
-    torch.testing.assert_close(slower.decay_rates, 2 * default.decay_rates)
+    decay = torch.exp(torch.tensor(-0.1 / 0.5))
+    a = torch.zeros(BATCH, N_NEURONS, N_NEURONS)
+    expected = []
+    for t in range(N_TIMESTEPS):
+        a = torch.clamp(decay * a + x[:, t, :, None] - x[:, t, None, :], min_attn_value, max_attn_value)
+        expected.append(a)
 
-    # Same weights, different timescales: different coefficients.
-    slower.load_state_dict({**default.state_dict(), 'decay_rates': slower.decay_rates, 'tau_s': slower.tau_s})
-    x = make_inputs(layer_class)
-    assert not torch.allclose(slower.stdp_forward(x), default.stdp_forward(x))
+    coefficients = layer.stdp_forward(x)
+    torch.testing.assert_close(coefficients, torch.stack(expected, dim=1))
+    if bounds == (-0.5, 1.5):
+        assert coefficients.min() == -0.5 and coefficients.max() == 1.5  # the bounds are reached
+
+
+def test_calcium_decay_is_set_by_dt_over_tau_s():
+    reference = CalciumAttentionLayer(n_neurons=N_NEURONS, embed_dim=EMBED_DIM, tau_s=1., dt=0.1)
+    same_ratio = CalciumAttentionLayer(n_neurons=N_NEURONS, embed_dim=EMBED_DIM, tau_s=2., dt=0.2)
+    other_ratio = CalciumAttentionLayer(n_neurons=N_NEURONS, embed_dim=EMBED_DIM, tau_s=2., dt=0.1)
+    x = make_inputs(CalciumAttentionLayer)
+
+    torch.testing.assert_close(same_ratio.stdp_forward(x), reference.stdp_forward(x))
+    assert not torch.allclose(other_ratio.stdp_forward(x), reference.stdp_forward(x))
+
+
+def test_calcium_layer_has_no_parameters_besides_its_projection():
+    layer = CalciumAttentionLayer(n_neurons=N_NEURONS, embed_dim=EMBED_DIM)
+
+    assert {name for name, _ in layer.named_parameters()} == {'v_proj.weight', 'v_proj.bias'}
 
 
 @pytest.mark.parametrize('layer_class', LAYER_CLASSES)
@@ -109,8 +134,3 @@ def test_checkpoints_reproduce_the_saved_layer(layer_class):
 
     x = make_inputs(layer_class)
     torch.testing.assert_close(loaded.stdp_forward(x), saved.stdp_forward(x))
-
-
-def test_calcium_tau_s_must_be_positive():
-    with pytest.raises(ValueError):
-        CalciumAttentionLayer(n_neurons=N_NEURONS, embed_dim=EMBED_DIM, tau_s=0.)

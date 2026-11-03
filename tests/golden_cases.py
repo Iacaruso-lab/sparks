@@ -8,10 +8,12 @@ test_golden.py rebuilds each model, loads the stored state_dict with strict=True
 parameter was renamed or reshaped, i.e. if existing checkpoints would no longer load -- and checks
 that it still produces the stored outputs.
 
-Regenerate only when a change in outputs is intended (e.g. a bug fix), and say why in the commit:
+Regenerate only when a change in outputs is intended (e.g. a bug fix), and say why in the commit; name
+the cases to regenerate only those, leaving the others' stored outputs as they are:
 
-    python tests/golden_cases.py
+    python tests/golden_cases.py [CASE ...]
 """
+import sys
 from pathlib import Path
 
 import torch
@@ -58,9 +60,12 @@ def compute_outputs(case: str, model: SPARKS, inputs: dict) -> dict:
 
 
 @torch.no_grad()
-def generate():
-    golden = {}
+def generate(cases=None):
+    """Regenerates the outputs of `cases` (every case if None), keeping the stored outputs of the others."""
+    golden = torch.load(GOLDEN_PATH, weights_only=True) if cases and GOLDEN_PATH.exists() else {}
     for i, case in enumerate(CASES):
+        if cases and case not in cases:
+            continue
         torch.manual_seed(i)
         model = build_model(case)
         for param in model.parameters():
@@ -72,5 +77,8 @@ def generate():
 
 
 if __name__ == '__main__':
-    generate()
+    unknown = set(sys.argv[1:]) - set(CASES)
+    if unknown:
+        sys.exit(f"Unknown cases: {sorted(unknown)}; the cases are {list(CASES)}")
+    generate(sys.argv[1:] or None)
     print(f"Wrote {GOLDEN_PATH}")

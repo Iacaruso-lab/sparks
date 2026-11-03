@@ -13,8 +13,6 @@ def make_res_folder(name: str, path_to_res: str, args: argparse.Namespace):
     """
     Constructs a folder to store experimental results with a unique id based on the given name and path.
 
-    If the argument `args` contains the attribute `online`, '_online' is appended to the folder name.
-
     Creates a `commandline_args.txt` file that stores the command line arguments with which the script was run.
 
     Sets device for torch in `args` if cuda is available, else sets it to cpu.
