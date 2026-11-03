@@ -1,5 +1,7 @@
 # Never ship PyPI settings or credentials, even if a stale *.egg-info file list still names them
 exclude .pypirc
-# The whole test suite, not only the tests/test*.py files setuptools picks by default
+# The whole test suite, not only the tests/test*.py files setuptools picks by default, and the
+# preprocessing script that tests/test_data/test_preprocess_allen.py loads
 graft tests
+graft scripts
 global-exclude __pycache__ *.py[cod]

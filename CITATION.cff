@@ -6,8 +6,8 @@ authors:
   - family-names: Skatchkovsky
     given-names: Nicolas
 license: GPL-3.0-or-later
-repository-code: "https://github.com/FrancisCrickInstitute/sparks"
-url: "https://franciscrickinstitute.github.io/sparks-ai/"
+repository-code: "https://github.com/Iacaruso-lab/sparks"
+url: "https://sparks.crick.ac.uk/"
 keywords:
   - computational neuroscience
   - spiking data

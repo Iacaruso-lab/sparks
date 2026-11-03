@@ -1,11 +1,11 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/FrancisCrickInstitute/sparks/main/logo.png" width="95%" alt="SPARKS">
+<img src="https://raw.githubusercontent.com/Iacaruso-lab/sparks/main/logo.png" width="95%" alt="SPARKS">
 
-[📚 Documentation](https://franciscrickinstitute.github.io/sparks-ai/docs#) |
-[💡 Demos](https://franciscrickinstitute.github.io/sparks-ai/demos#) |
-[🌎 Home page](https://franciscrickinstitute.github.io/sparks-ai/) |
-[🪲 Report an issue](https://github.com/FrancisCrickInstitute/sparks/issues)
+[📚 Documentation](https://sparks.crick.ac.uk/docs#) |
+[💡 Demos](https://sparks.crick.ac.uk/demos#) |
+[🌎 Home page](https://sparks.crick.ac.uk/) |
+[🪲 Report an issue](https://github.com/Iacaruso-lab/sparks/issues)
 
 </div>
 
@@ -29,7 +29,7 @@ latent space. It works with electrophysiology (spikes) and calcium imaging data.
 
 `sparks-ai` is implemented in [PyTorch](https://pytorch.org/).
 
-> **0.3.0 is a breaking release.** See the [CHANGELOG](https://github.com/FrancisCrickInstitute/sparks/blob/main/CHANGELOG.md)
+> **0.3.0 is a breaking release.** See the [CHANGELOG](https://github.com/Iacaruso-lab/sparks/blob/main/CHANGELOG.md)
 > for what's new and how to update 0.2.x code.
 
 ## Installation
@@ -112,15 +112,15 @@ To use your own data, subclass `sparks.data.BaseDataset`, or pass any dataloader
 
 ## Examples
 
-The [`examples/`](https://github.com/FrancisCrickInstitute/sparks/tree/main/examples) notebooks
+The [`examples/`](https://github.com/Iacaruso-lab/sparks/tree/main/examples) notebooks
 train SPARKS on real data:
 
-- [`mec.ipynb`](https://github.com/FrancisCrickInstitute/sparks/blob/main/examples/mec.ipynb):
+- [`mec.ipynb`](https://github.com/Iacaruso-lab/sparks/blob/main/examples/mec.ipynb):
   unsupervised learning on medial entorhinal cortex recordings, recovering their slow oscillatory
   sequences.
-- [`area2_bump.ipynb`](https://github.com/FrancisCrickInstitute/sparks/blob/main/examples/area2_bump.ipynb):
+- [`area2_bump.ipynb`](https://github.com/Iacaruso-lab/sparks/blob/main/examples/area2_bump.ipynb):
   decoding a monkey's hand position from somatosensory cortex.
-- [`allen_multisession.ipynb`](https://github.com/FrancisCrickInstitute/sparks/blob/main/examples/allen_multisession.ipynb):
+- [`allen_multisession.ipynb`](https://github.com/Iacaruso-lab/sparks/blob/main/examples/allen_multisession.ipynb):
   one model for several mice, decoding which movie frame they see, then adding a new mouse.
 
 ## Reproducing the paper
@@ -146,10 +146,10 @@ If you use SPARKS, please cite:
 ## Contributing
 
 Contributions are welcome! See
-[CONTRIBUTING.md](https://github.com/FrancisCrickInstitute/sparks/blob/main/CONTRIBUTING.md) to
+[CONTRIBUTING.md](https://github.com/Iacaruso-lab/sparks/blob/main/CONTRIBUTING.md) to
 set up a development environment and run the tests.
 
 ## License
 
 SPARKS is free software, released under the
-[GNU General Public License v3.0 or later](https://github.com/FrancisCrickInstitute/sparks/blob/main/LICENSE.md).
+[GNU General Public License v3.0 or later](https://github.com/Iacaruso-lab/sparks/blob/main/LICENSE.md).

@@ -2,12 +2,12 @@
 
 Thanks for helping improve SPARKS! This page covers setting up a development environment, the
 layout of the code, the conventions we follow, and how a release is made. For bugs and feature
-requests, please [open an issue](https://github.com/FrancisCrickInstitute/sparks/issues).
+requests, please [open an issue](https://github.com/Iacaruso-lab/sparks/issues).
 
 ## Development setup
 
 ```bash
-git clone https://github.com/FrancisCrickInstitute/sparks.git
+git clone https://github.com/Iacaruso-lab/sparks.git
 cd sparks
 pip install -e ".[dev,all]"   # `all` adds the data loaders' optional dependencies
 pre-commit install            # runs the linter and strips notebook outputs on every commit
@@ -98,7 +98,7 @@ has complete ones.
 3. Check that CI passes, then build and check the package from a fresh clone (in a working copy,
    a `sparks_ai.egg-info` left by an editable install makes setuptools reuse its stale file list):
    ```bash
-   git clone https://github.com/FrancisCrickInstitute/SPARKS.git sparks-release && cd sparks-release
+   git clone https://github.com/Iacaruso-lab/sparks.git sparks-release && cd sparks-release
    python -m build
    twine check --strict dist/*
    ```

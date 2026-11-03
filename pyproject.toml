@@ -47,9 +47,9 @@ dev = ["pytest", "ruff", "pre-commit", "build", "twine", "tqdm"]
 # and CUDA, i.e. `pip install causal-conv1d mamba-ssm --no-build-isolation`.
 
 [project.urls]
-Homepage = "https://github.com/FrancisCrickInstitute/SPARKS"
-Documentation = "https://franciscrickinstitute.github.io/sparks-ai/"
-Issues = "https://github.com/FrancisCrickInstitute/SPARKS/issues"
+Homepage = "https://github.com/Iacaruso-lab/sparks"
+Documentation = "https://sparks.crick.ac.uk/"
+Issues = "https://github.com/Iacaruso-lab/sparks/issues"
 
 [tool.setuptools.dynamic]
 version = {attr = "sparks.__version__"}
